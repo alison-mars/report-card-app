@@ -297,13 +297,13 @@ export async function getTestDetail(testId: string) {
 export type ClassroomTeacher = {
   _id: string;
   name?: string;
-  phone: string;
+  email: string;
 };
 
 export type ClassroomStudent = {
   _id: string;
   name?: string;
-  phone: string;
+  email: string;
   createdAt?: string;
 };
 
@@ -360,7 +360,7 @@ export type TestSessionListItem = {
   createdBy: {
     _id: string;
     name?: string;
-    phone: string;
+    email: string;
   };
   totalStudents: number;
   completedCount: number;
@@ -373,7 +373,7 @@ export type TestResultStudent = {
   student: {
     _id: string;
     name?: string;
-    phone: string;
+    email: string;
   };
   score: number;
   correctAnswers: number;
@@ -464,7 +464,7 @@ export async function searchUsersForClassroom(query: string, limit: number = 10)
     data: Array<{
       _id: string;
       name?: string;
-      phone: string;
+      email: string;
       createdAt?: string;
     }>;
   };
@@ -472,7 +472,7 @@ export async function searchUsersForClassroom(query: string, limit: number = 10)
 
 export async function addStudentToClassroom(
   classroomId: string,
-  params: { userId?: string; phone?: string; name?: string }
+  params: { userId?: string; email?: string; name?: string }
 ) {
   const resp = await apiClient.post(`/api/classrooms/${classroomId}/students`, params);
   return resp.data as {
@@ -480,7 +480,7 @@ export async function addStudentToClassroom(
     data: {
       _id: string;
       name?: string;
-      phone: string;
+      email: string;
     };
     studentsCount: number;
     message: string;

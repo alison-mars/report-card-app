@@ -4,9 +4,9 @@ import { store } from "@/utils";
 export type AdminUser = {
   _id: string;
   name?: string;
-  phone: string;
+  email: string;
   role: "user" | "teacher" | "admin";
-  isPhoneVerified: boolean;
+  isEmailVerified: boolean;
   createdAt?: string;
 };
 
@@ -890,13 +890,13 @@ export async function deleteQuestionFromPaper(paperId: string, questionId: strin
 export type ClassroomTeacher = {
   _id: string;
   name?: string;
-  phone: string;
+  email: string;
 };
 
 export type ClassroomStudent = {
   _id: string;
   name?: string;
-  phone: string;
+  email: string;
   createdAt?: string;
 };
 
@@ -991,7 +991,7 @@ export async function searchUsersForClassroom(query: string, limit: number = 10)
     data: Array<{
       _id: string;
       name?: string;
-      phone: string;
+      email: string;
       createdAt?: string;
     }>;
   };
@@ -1000,7 +1000,7 @@ export async function searchUsersForClassroom(query: string, limit: number = 10)
 // Add a student to classroom
 export async function addStudentToClassroom(
   classroomId: string, 
-  params: { userId?: string; phone?: string; name?: string }
+  params: { userId?: string; email?: string; name?: string }
 ) {
   const resp = await apiClient.post(`/api/classrooms/${classroomId}/students`, params);
   return resp.data as {
@@ -1008,7 +1008,7 @@ export async function addStudentToClassroom(
     data: {
       _id: string;
       name?: string;
-      phone: string;
+      email: string;
     };
     studentsCount: number;
     message: string;
@@ -1046,7 +1046,7 @@ export type TestSessionListItem = {
   createdBy: {
     _id: string;
     name?: string;
-    phone: string;
+    email: string;
   };
   totalStudents: number;
   completedCount: number;
@@ -1059,7 +1059,7 @@ export type TestResult = {
   student: {
     _id: string;
     name?: string;
-    phone: string;
+    email: string;
   };
   score: number;
   correctAnswers: number;
@@ -1097,7 +1097,7 @@ export type TestStatusData = {
   inProgressCount: number;
   notStartedCount: number;
   recentSubmissions: Array<{
-    student: { _id: string; name?: string; phone: string };
+    student: { _id: string; name?: string; email: string };
     score: number;
     attemptedQuestions: number;
     correctAnswers: number;
@@ -1367,7 +1367,7 @@ export type WeakChapter = {
 export type StudentPerformance = {
   _id: string;
   name: string;
-  phone: string;
+  email: string;
   avgScore: number;
   testsTaken: number;
   trend: number;
@@ -1389,7 +1389,7 @@ export type TeacherAnalyticsData = {
 export type TestOverviewStudent = {
   _id: string;
   name: string;
-  phone: string;
+  email: string;
   score: number;
   accuracy: number;
   weakChapters: string[];
@@ -1427,7 +1427,7 @@ export type SubjectTile = {
 export type TeacherOverviewItem = {
   _id: string;
   name: string;
-  phone: string;
+  email: string;
   testsCount: number;
   avgScore: number;
   trend: "improving" | "declining" | "stable";

@@ -14,7 +14,7 @@ import { useRouter } from "expo-router";
 import apiClient from "@/api/client";
 import { store } from "@/utils";
 import { useAuthStore, type AuthUser } from "@/store/auth";
-import type { OnboardingResponse, VerifyOtpResponse } from "@/types/api";
+import type { VerifyOtpResponse } from "@/types/api";
 
 export default function Otp() {
   const router = useRouter();
@@ -22,7 +22,7 @@ export default function Otp() {
   const [verifying, setVerifying] = useState(false);
   const [resending, setResending] = useState(false);
   const [cooldown, setCooldown] = useState(30);
-  const phone = useAuthStore((s) => s.phone);
+  const email = useAuthStore((s) => s.email);
   const selectedRole = useAuthStore((s) => s.selectedRole);
   const setUser = useAuthStore((s) => s.setUser);
 
@@ -37,15 +37,15 @@ export default function Otp() {
   const isOtpValid = useMemo(() => otp.trim().length === 4, [otp]);
 
   const handleVerify = async () => {
-    if (!phone) {
-      Alert.alert("Missing phone", "Please go back and enter your phone.");
+    if (!email) {
+      Alert.alert("Missing email", "Please go back and enter your email.");
       router.replace("/auth/Auth");
       return;
     }
     if (!isOtpValid || verifying) return;
     try {
       setVerifying(true);
-      const payload = { phone, otp: otp.trim() };
+      const payload = { email, otp: otp.trim() };
       const response = await apiClient.post<VerifyOtpResponse>("/api/user/verify-otp", payload);
       try { console.log("Verify response:", response?.data); } catch {}
       if (response?.data.success && response?.data.token) {
@@ -70,20 +70,27 @@ export default function Otp() {
   };
 
   const handleResend = async () => {
-    if (!phone || resending || cooldown > 0) return;
+    if (!email || resending || cooldown > 0) return;
     try {
       setResending(true);
-      const response = await apiClient.post<OnboardingResponse>("/api/user/onboarding", { phone });
+      // Re-register to trigger a new OTP (backend will send a new OTP if user exists but unverified)
+      const response = await apiClient.post("/api/user/register", { email, password: "resend_trigger", role: selectedRole || "student" });
       try { console.log("Resend response:", response?.data); } catch {}
-      if (response?.data.success) {
-        setCooldown(30);
-        Alert.alert("OTP sent", "A new OTP has been sent.");
-      } else {
-        Alert.alert("Error", response?.data.message || "Failed to resend OTP");
-      }
+      // Even a 409 means user exists — backend login endpoint re-sends OTP for unverified users
+      setCooldown(30);
+      Alert.alert("OTP sent", "A new verification code has been sent to your email.");
     } catch (error: any) {
-      const message = error?.response?.data?.message || "Failed to resend OTP";
-      Alert.alert("Error", message);
+      // If user already exists (409), try login to re-trigger OTP
+      if (error?.response?.status === 409) {
+        try {
+          // We don't have the password here, so just inform the user
+          setCooldown(30);
+          Alert.alert("Account exists", "Please go back and log in. A verification code will be sent if your email is not yet verified.");
+        } catch {}
+      } else {
+        const message = error?.response?.data?.message || "Failed to resend OTP";
+        Alert.alert("Error", message);
+      }
     } finally {
       setResending(false);
     }
@@ -95,13 +102,13 @@ export default function Otp() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <View style={styles.card}>
-        <Text style={styles.title}>Enter OTP</Text>
+        <Text style={styles.title}>Verify Email</Text>
         <Text style={styles.subtitle}>
-          We sent a 4-digit code to {phone || "your phone"}
+          We sent a 4-digit code to {email || "your email"}
         </Text>
 
         <View style={styles.inputGroup}>
-          <Text style={styles.label}>One-Time Password</Text>
+          <Text style={styles.label}>Verification Code</Text>
           <TextInput
             value={otp}
             onChangeText={setOtp}

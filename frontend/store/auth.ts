@@ -3,14 +3,14 @@ import { create } from "zustand";
 export type AuthUser = {
   _id: string;
   name?: string;
-  phone: string;
+  email: string;
   role?: string;
-  isPhoneVerified?: boolean;
+  isEmailVerified?: boolean;
 };
 
 export type AuthState = {
   user: AuthUser | null;
-  phone: string | null;
+  email: string | null;
   userId: string | null;
   selectedRole: "student" | "teacher" | null;
   profileStatus: {
@@ -20,7 +20,7 @@ export type AuthState = {
     profileSummary?: Record<string, unknown> | null;
   } | null;
   setUser: (user: AuthUser | null) => void;
-  setPhone: (phone: string | null) => void;
+  setEmail: (email: string | null) => void;
   setUserId: (userId: string | null) => void;
   setSelectedRole: (role: "student" | "teacher" | null) => void;
   setProfileStatus: (status: AuthState["profileStatus"]) => void;
@@ -29,14 +29,14 @@ export type AuthState = {
 
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
-  phone: null,
+  email: null,
   userId: null,
   selectedRole: null,
   profileStatus: null,
   setUser: (user) => set({ user }),
-  setPhone: (phone) => set({ phone }),
+  setEmail: (email) => set({ email }),
   setUserId: (userId) => set({ userId }),
   setSelectedRole: (selectedRole) => set({ selectedRole }),
   setProfileStatus: (profileStatus) => set({ profileStatus }),
-  clearUser: () => set({ user: null, phone: null, userId: null, selectedRole: null }),
+  clearUser: () => set({ user: null, email: null, userId: null, selectedRole: null }),
 }));

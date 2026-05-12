@@ -1,10 +1,11 @@
 import { Router } from "express";
-import { getUser, onboarding,verifyOtp, getProfileStatus, completeUserProfile, completeTeacherProfile } from "../controllers/userControllers";
+import { getUser, register, login, verifyOtp, getProfileStatus, completeUserProfile, completeTeacherProfile } from "../controllers/userControllers";
 import { isAuthenticated } from "../middlewares/auth";
 
 const userRouter = Router();
 
-userRouter.post("/onboarding",onboarding);
+userRouter.post("/register", register);
+userRouter.post("/login", login);
 userRouter.post("/verify-otp", verifyOtp);
 userRouter.get("/user", isAuthenticated, getUser);
 userRouter.get("/profile-status", isAuthenticated, getProfileStatus);

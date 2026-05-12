@@ -273,7 +273,7 @@ export default function TestResultsScreen() {
               <View key={idx} style={styles.recentItem}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.recentName}>
-                    {submission.student?.name || submission.student?.phone || "Unknown"}
+                    {submission.student?.name || submission.student?.email || "Unknown"}
                   </Text>
                   <Text style={styles.recentMeta}>
                     {submission.correctAnswers}/{submission.attemptedQuestions} correct
@@ -306,10 +306,10 @@ export default function TestResultsScreen() {
                 <View style={styles.resultHeader}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.resultName}>
-                      {result.student?.name || result.student?.phone || "Unknown Student"}
+                      {result.student?.name || result.student?.email || "Unknown Student"}
                     </Text>
-                    {result.student?.phone && result.student?.name && (
-                      <Text style={styles.resultPhone}>{result.student.phone}</Text>
+                    {result.student?.email && result.student?.name && (
+                      <Text style={styles.resultPhone}>{result.student.email}</Text>
                     )}
                   </View>
                   <View style={[styles.resultStatus, { backgroundColor: statusColors.bg }]}>

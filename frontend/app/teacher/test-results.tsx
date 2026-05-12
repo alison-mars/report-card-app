@@ -117,12 +117,12 @@ export default function TeacherTestResultsScreen() {
               <View style={styles.resultLeft}>
                 <View style={styles.resultAvatar}>
                   <Text style={styles.resultAvatarText}>
-                    {(result.student.name || result.student.phone || "?").charAt(0).toUpperCase()}
+                    {(result.student.name || result.student.email || "?").charAt(0).toUpperCase()}
                   </Text>
                 </View>
                 <View>
                   <Text style={styles.resultName}>{result.student.name || "No Name"}</Text>
-                  <Text style={styles.resultPhone}>{result.student.phone}</Text>
+                  <Text style={styles.resultPhone}>{result.student.email}</Text>
                   <Text style={[styles.resultStatus, { color: scoreColor }]}>
                     {result.status.replace("_", " ").toUpperCase()}
                   </Text>

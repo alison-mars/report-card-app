@@ -118,7 +118,7 @@ export default function AnalyticsScreen() {
   const getSelectedTeacherName = () => {
     if (!selectedTeacherId) return "All Teachers";
     const teacher = teachers.find(t => t._id === selectedTeacherId);
-    return teacher?.name || teacher?.phone || "Unknown Teacher";
+    return teacher?.name || teacher?.email || "Unknown Teacher";
   };
 
   const getScoreColor = (score: number) => {
@@ -187,7 +187,7 @@ export default function AnalyticsScreen() {
               <View key={student._id || idx} style={[styles.tableRow, idx % 2 === 0 && styles.tableRowEven]}>
                 <View style={{ flex: 2 }}>
                   <Text style={styles.studentName}>{student.name}</Text>
-                  <Text style={styles.studentPhone}>{student.phone}</Text>
+                  <Text style={styles.studentPhone}>{student.email}</Text>
                 </View>
                 <Text style={[styles.tableCell, { flex: 1, color: getScoreColor(student.score) }]}>
                   {student.score}%
@@ -309,7 +309,7 @@ export default function AnalyticsScreen() {
                           ]}>
                             {teacher.name || "Unnamed Teacher"}
                           </Text>
-                          <Text style={styles.pickerItemSubtext}>{teacher.phone}</Text>
+                          <Text style={styles.pickerItemSubtext}>{teacher.email}</Text>
                         </View>
                         {selectedTeacherId === teacher._id && <Text style={styles.pickerCheck}>✓</Text>}
                       </Pressable>
@@ -585,7 +585,7 @@ export default function AnalyticsScreen() {
                       <View style={styles.teacherCardHeader}>
                         <View style={{ flex: 1 }}>
                           <Text style={styles.teacherName}>{teacher.name}</Text>
-                          <Text style={styles.teacherPhone}>{teacher.phone}</Text>
+                          <Text style={styles.teacherPhone}>{teacher.email}</Text>
                         </View>
                         <View style={[styles.activityBadge, { backgroundColor: isActive ? "#d1fae5" : "#fee2e2" }]}>
                           <View style={[styles.activityDot, { backgroundColor: isActive ? "#059669" : "#dc2626" }]} />

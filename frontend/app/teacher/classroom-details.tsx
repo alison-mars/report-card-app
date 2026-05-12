@@ -35,10 +35,10 @@ export default function TeacherClassroomDetailsScreen() {
   // Add student modal state
   const [showAddModal, setShowAddModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<Array<{ _id: string; name?: string; phone: string }>>([]);
+  const [searchResults, setSearchResults] = useState<Array<{ _id: string; name?: string; email: string }>>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
-  const [directPhone, setDirectPhone] = useState("");
+  const [directEmail, setDirectEmail] = useState("");
 
   const fetchClassroom = useCallback(async () => {
     if (!id) return;
@@ -126,7 +126,7 @@ export default function TeacherClassroomDetailsScreen() {
 
       setSearchResults(prev => prev.filter(u => u._id !== userId));
 
-      Alert.alert("Success", `${resp.data.name || resp.data.phone} has been added to the classroom`);
+      Alert.alert("Success", `${resp.data.name || resp.data.email} has been added to the classroom`);
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.message || "Failed to add student");
     } finally {
@@ -134,29 +134,29 @@ export default function TeacherClassroomDetailsScreen() {
     }
   };
 
-  const handleAddByPhone = async () => {
-    const phone = directPhone.trim();
-    if (!phone) {
-      Alert.alert("Error", "Please enter a phone number");
+  const handleAddByEmail = async () => {
+    const email = directEmail.trim();
+    if (!email) {
+      Alert.alert("Error", "Please enter an email address");
       return;
     }
     if (!classroom) return;
 
     try {
       setIsAdding(true);
-      const resp = await addStudentToClassroom(classroom._id, { phone });
+      const resp = await addStudentToClassroom(classroom._id, { email });
 
       setClassroom({
         ...classroom,
         students: [...classroom.students, resp.data as ClassroomStudent],
       });
 
-      setDirectPhone("");
+      setDirectEmail("");
       setShowAddModal(false);
       setSearchQuery("");
       setSearchResults([]);
 
-      Alert.alert("Success", `${resp.data.name || resp.data.phone} has been added to the classroom`);
+      Alert.alert("Success", `${resp.data.name || resp.data.email} has been added to the classroom`);
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.message || "Failed to add student");
     } finally {
@@ -169,7 +169,7 @@ export default function TeacherClassroomDetailsScreen() {
 
     Alert.alert(
       "Remove Student",
-      `Are you sure you want to remove ${student.name || student.phone} from this classroom?`,
+      `Are you sure you want to remove ${student.name || student.email} from this classroom?`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -294,7 +294,7 @@ export default function TeacherClassroomDetailsScreen() {
         {classroom.students.length === 0 ? (
           <View style={styles.noStudents}>
             <Text style={styles.noStudentsText}>No students in this classroom yet</Text>
-            <Text style={styles.noStudentsHint}>Add students using their name or phone number</Text>
+            <Text style={styles.noStudentsHint}>Add students using their name or email address</Text>
           </View>
         ) : (
           <View style={styles.studentsList}>
@@ -303,12 +303,12 @@ export default function TeacherClassroomDetailsScreen() {
                 <View style={styles.studentInfo}>
                   <View style={styles.studentAvatar}>
                     <Text style={styles.studentAvatarText}>
-                      {(student.name || student.phone || "?").charAt(0).toUpperCase()}
+                      {(student.name || student.email || "?").charAt(0).toUpperCase()}
                     </Text>
                   </View>
                   <View>
                     <Text style={styles.studentName}>{student.name || "No Name"}</Text>
-                    <Text style={styles.studentPhone}>{student.phone}</Text>
+                    <Text style={styles.studentPhone}>{student.email}</Text>
                   </View>
                 </View>
                 <Pressable onPress={() => handleRemoveStudent(student)} style={styles.removeBtn}>
@@ -332,10 +332,10 @@ export default function TeacherClassroomDetailsScreen() {
             <Text style={styles.modalTitle}>Add Student</Text>
 
             {/* Search Section */}
-            <Text style={styles.inputLabel}>Search by name or phone</Text>
+            <Text style={styles.inputLabel}>Search by name or email</Text>
             <View style={styles.searchRow}>
               <TextInput
-                placeholder="Enter name or phone number..."
+                placeholder="Enter name or email..."
                 value={searchQuery}
                 onChangeText={setSearchQuery}
                 style={[styles.input, { flex: 1 }]}
@@ -357,7 +357,7 @@ export default function TeacherClassroomDetailsScreen() {
                     <View key={user._id} style={styles.searchResultItem}>
                       <View>
                         <Text style={styles.searchResultName}>{user.name || "No Name"}</Text>
-                        <Text style={styles.searchResultPhone}>{user.phone}</Text>
+                        <Text style={styles.searchResultPhone}>{user.email}</Text>
                       </View>
                       <Pressable
                         onPress={() => handleAddStudent(user._id)}
@@ -379,20 +379,21 @@ export default function TeacherClassroomDetailsScreen() {
               <View style={styles.dividerLine} />
             </View>
 
-            {/* Direct Phone Entry */}
-            <Text style={styles.inputLabel}>Add by phone number directly</Text>
+            {/* Direct Email Entry */}
+            <Text style={styles.inputLabel}>Add by email directly</Text>
             <View style={styles.searchRow}>
               <TextInput
-                placeholder="Enter exact phone number..."
-                value={directPhone}
-                onChangeText={setDirectPhone}
+                placeholder="Enter exact email address..."
+                value={directEmail}
+                onChangeText={setDirectEmail}
                 style={[styles.input, { flex: 1 }]}
-                keyboardType="phone-pad"
+                keyboardType="email-address"
+                autoCapitalize="none"
                 placeholderTextColor="#9ca3af"
               />
               <Pressable
-                onPress={handleAddByPhone}
-                disabled={isAdding || !directPhone.trim()}
+                onPress={handleAddByEmail}
+                disabled={isAdding || !directEmail.trim()}
                 style={[styles.searchBtn, { backgroundColor: "#059669" }]}
               >
                 <Text style={styles.searchBtnText}>{isAdding ? "..." : "Add"}</Text>
@@ -400,7 +401,7 @@ export default function TeacherClassroomDetailsScreen() {
             </View>
 
             <Pressable
-              onPress={() => { setShowAddModal(false); setSearchQuery(""); setSearchResults([]); setDirectPhone(""); }}
+              onPress={() => { setShowAddModal(false); setSearchQuery(""); setSearchResults([]); setDirectEmail(""); }}
               style={styles.closeModalBtn}
             >
               <Text style={styles.closeModalBtnText}>Close</Text>

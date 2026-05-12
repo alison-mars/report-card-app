@@ -9,118 +9,197 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
 } from "react-native";
 import apiClient from "@/api/client";
-import type { OnboardingResponse } from "@/types/api";
+import type { RegisterResponse, LoginResponse } from "@/types/api";
 import { useRouter } from "expo-router";
-import { useAuthStore } from "@/store/auth";
+import { useAuthStore, type AuthUser } from "@/store/auth";
+import { store } from "@/utils";
 
 export type UserRole = "student" | "teacher";
 
 export default function Auth() {
-  const [phone, setPhone] = useState("");
+  const [isLoginMode, setIsLoginMode] = useState(true);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [selectedRole, setSelectedRole] = useState<UserRole>("student");
   const [submitting, setSubmitting] = useState(false);
   const router = useRouter();
-  const setPhoneInStore = useAuthStore((s) => s.setPhone);
+  const setEmailInStore = useAuthStore((s) => s.setEmail);
   const setUserIdInStore = useAuthStore((s) => s.setUserId);
   const setSelectedRoleInStore = useAuthStore((s) => s.setSelectedRole);
+  const setUser = useAuthStore((s) => s.setUser);
 
-  const isValidPhone = phone.replace(/\D/g, "").length >= 10;
+  const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const isValidPassword = password.length >= 6;
+  const canSubmit = isValidEmail && isValidPassword && !submitting;
 
-  const handleGetOtp = async () => {
-    if (!isValidPhone || submitting) return;
+  // ── Register ──
+  const handleRegister = async () => {
+    if (!canSubmit) return;
     try {
       setSubmitting(true);
-      const payload = { phone: phone.trim(), role: selectedRole };
-      const response = await apiClient.post<OnboardingResponse>("/api/user/onboarding", payload);
-      try { console.log("Onboarding response:", response?.data); } catch {}
+      const payload = { email: email.trim().toLowerCase(), password, role: selectedRole };
+      const response = await apiClient.post<RegisterResponse>("/api/user/register", payload);
       if (response?.data.success) {
-        setPhoneInStore(payload.phone);
+        setEmailInStore(payload.email);
         setSelectedRoleInStore(selectedRole);
         if (response?.data.userId) setUserIdInStore(response.data.userId);
         router.replace("/auth/Otp");
       } else {
-        Alert.alert("Error", response?.data.message || "Failed to send OTP");
+        Alert.alert("Error", response?.data.message || "Registration failed");
       }
     } catch (error: any) {
-      const message = error?.response?.data?.message || "Failed to send OTP";
+      const message = error?.response?.data?.message || "Registration failed";
       Alert.alert("Error", message);
     } finally {
       setSubmitting(false);
     }
   };
 
+  // ── Login ──
+  const handleLogin = async () => {
+    if (!canSubmit) return;
+    try {
+      setSubmitting(true);
+      const payload = { email: email.trim().toLowerCase(), password };
+      const response = await apiClient.post<LoginResponse>("/api/user/login", payload);
+      if (response?.data.success && response?.data.token) {
+        await store.set("token", response.data.token);
+        if (response?.data.user) {
+          setUser(response.data.user as AuthUser);
+        }
+        const userRole = response?.data.role || response?.data.user?.role || "student";
+        await store.set("role", userRole);
+        router.replace("/");
+      } else if (response?.data.requiresVerification) {
+        // Email not verified — redirect to OTP screen
+        setEmailInStore(email.trim().toLowerCase());
+        if (response?.data.userId) setUserIdInStore(response.data.userId);
+        Alert.alert("Verify Email", response?.data.message || "Please verify your email.");
+        router.replace("/auth/Otp");
+      } else {
+        Alert.alert("Error", response?.data.message || "Login failed");
+      }
+    } catch (error: any) {
+      const message = error?.response?.data?.message || "Login failed";
+      Alert.alert("Error", message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleSubmit = isLoginMode ? handleLogin : handleRegister;
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
-      <View style={styles.card}>
-        <Text style={styles.title}>Welcome</Text>
-        <Text style={styles.subtitle}>Sign in or create your account</Text>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.card}>
+          <Text style={styles.title}>Welcome</Text>
+          <Text style={styles.subtitle}>
+            {isLoginMode ? "Log in to your account" : "Create a new account"}
+          </Text>
 
-        {/* Role Selection */}
-        <View style={styles.roleSection}>
-          <Text style={styles.roleLabel}>I am a</Text>
-          <View style={styles.roleRow}>
-            <TouchableOpacity
-              style={[styles.roleCard, selectedRole === "student" && styles.roleCardActive]}
-              onPress={() => setSelectedRole("student")}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.roleEmoji}>🎓</Text>
-              <Text style={[styles.roleText, selectedRole === "student" && styles.roleTextActive]}>
-                Student
-              </Text>
-              <Text style={[styles.roleDesc, selectedRole === "student" && styles.roleDescActive]}>
-                Take tests & track progress
-              </Text>
-            </TouchableOpacity>
+          {/* Register-only: Role Selection */}
+          {!isLoginMode && (
+            <View style={styles.roleSection}>
+              <Text style={styles.roleLabel}>I am a</Text>
+              <View style={styles.roleRow}>
+                <TouchableOpacity
+                  style={[styles.roleCard, selectedRole === "student" && styles.roleCardActive]}
+                  onPress={() => setSelectedRole("student")}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.roleEmoji}>🎓</Text>
+                  <Text style={[styles.roleText, selectedRole === "student" && styles.roleTextActive]}>
+                    Student
+                  </Text>
+                  <Text style={[styles.roleDesc, selectedRole === "student" && styles.roleDescActive]}>
+                    Take tests & track progress
+                  </Text>
+                </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.roleCard, selectedRole === "teacher" && styles.roleCardActive]}
-              onPress={() => setSelectedRole("teacher")}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.roleEmoji}>📚</Text>
-              <Text style={[styles.roleText, selectedRole === "teacher" && styles.roleTextActive]}>
-                Teacher
+                <TouchableOpacity
+                  style={[styles.roleCard, selectedRole === "teacher" && styles.roleCardActive]}
+                  onPress={() => setSelectedRole("teacher")}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.roleEmoji}>📚</Text>
+                  <Text style={[styles.roleText, selectedRole === "teacher" && styles.roleTextActive]}>
+                    Teacher
+                  </Text>
+                  <Text style={[styles.roleDesc, selectedRole === "teacher" && styles.roleDescActive]}>
+                    Create classrooms & assign tests
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* Email */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Email</Text>
+            <TextInput
+              value={email}
+              onChangeText={setEmail}
+              placeholder="Enter your email"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              textContentType="emailAddress"
+              style={styles.input}
+              placeholderTextColor="#9ca3af"
+            />
+          </View>
+
+          {/* Password */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Password</Text>
+            <TextInput
+              value={password}
+              onChangeText={setPassword}
+              placeholder={isLoginMode ? "Enter your password" : "Create a password (min 6 chars)"}
+              secureTextEntry
+              textContentType={isLoginMode ? "password" : "newPassword"}
+              style={styles.input}
+              placeholderTextColor="#9ca3af"
+            />
+          </View>
+
+          <TouchableOpacity
+            onPress={handleSubmit}
+            activeOpacity={0.8}
+            style={[styles.button, !canSubmit && styles.buttonDisabled]}
+            disabled={!canSubmit}
+          >
+            {submitting ? (
+              <ActivityIndicator color="#ffffff" />
+            ) : (
+              <Text style={styles.buttonText}>
+                {isLoginMode ? "Log In" : "Register"}
               </Text>
-              <Text style={[styles.roleDesc, selectedRole === "teacher" && styles.roleDescActive]}>
-                Create classrooms & assign tests
+            )}
+          </TouchableOpacity>
+
+          {/* Toggle Login / Register */}
+          <View style={styles.toggleRow}>
+            <Text style={styles.toggleText}>
+              {isLoginMode ? "Don't have an account?" : "Already have an account?"}
+            </Text>
+            <TouchableOpacity onPress={() => setIsLoginMode(!isLoginMode)}>
+              <Text style={styles.toggleLink}>
+                {isLoginMode ? "Register" : "Log In"}
               </Text>
             </TouchableOpacity>
           </View>
         </View>
-
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>Phone number</Text>
-          <TextInput
-            value={phone}
-            onChangeText={setPhone}
-            placeholder="Enter phone number"
-            keyboardType="phone-pad"
-            textContentType="telephoneNumber"
-            style={styles.input}
-            maxLength={16}
-            placeholderTextColor="#9ca3af"
-          />
-        </View>
-
-        <TouchableOpacity
-          onPress={handleGetOtp}
-          activeOpacity={0.8}
-          style={[styles.button, (!isValidPhone || submitting) && styles.buttonDisabled]}
-          disabled={!isValidPhone || submitting}
-        >
-          {submitting ? (
-            <ActivityIndicator color="#ffffff" />
-          ) : (
-            <Text style={styles.buttonText}>Get OTP</Text>
-          )}
-        </TouchableOpacity>
-      </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -129,9 +208,13 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#f9fafb",
+  },
+  scrollContent: {
+    flexGrow: 1,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 20,
+    paddingVertical: 40,
   },
   card: {
     width: "100%",
@@ -234,6 +317,20 @@ const styles = StyleSheet.create({
   buttonText: {
     color: "#ffffff",
     fontSize: 16,
+    fontWeight: "600",
+  },
+  toggleRow: {
+    marginTop: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  toggleText: {
+    color: "#6b7280",
+    marginRight: 6,
+  },
+  toggleLink: {
+    color: "#2563eb",
     fontWeight: "600",
   },
 });

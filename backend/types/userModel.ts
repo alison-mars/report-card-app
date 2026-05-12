@@ -5,10 +5,11 @@ export type Role = (typeof ROLES)[keyof typeof ROLES];
 export type UserModel = {
     _id: mongoose.Types.ObjectId;
     name?: string;
-    phone: string;
+    email: string;
+    password: string;
     otp?: string;
     otpExpiry?: Date;
-    isPhoneVerified: boolean;
+    isEmailVerified: boolean;
     role?: Role;
     userProfile?: mongoose.Types.ObjectId;
     teacherProfile?: mongoose.Types.ObjectId;

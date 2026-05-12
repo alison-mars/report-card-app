@@ -71,7 +71,7 @@ export const listClassrooms = async (req: CustomRequest, res: Response) => {
 
     const [classrooms, total] = await Promise.all([
       Classroom.find(filter)
-        .populate("teacher", "name phone")
+        .populate("teacher", "name email")
         .sort({ updatedAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -112,8 +112,8 @@ export const getClassroom = async (req: CustomRequest, res: Response) => {
     const { classroomId } = req.params;
 
     const classroom = await Classroom.findById(classroomId)
-      .populate("teacher", "name phone")
-      .populate("students", "name phone createdAt")
+      .populate("teacher", "name email")
+      .populate("students", "name email createdAt")
       .lean();
 
     if (!classroom) {
@@ -224,7 +224,7 @@ export const deleteClassroom = async (req: CustomRequest, res: Response) => {
   }
 };
 
-// Search users by name or phone (for adding to classroom)
+// Search users by name or email (for adding to classroom)
 export const searchUsers = async (req: CustomRequest, res: Response) => {
   try {
     const search = String(req.query.q || "").trim();
@@ -235,16 +235,16 @@ export const searchUsers = async (req: CustomRequest, res: Response) => {
       return;
     }
 
-    // Search by name or phone
+    // Search by name or email
     const users = await User.find({
-      isPhoneVerified: true,
+      isEmailVerified: true,
       role: ROLES.USER, // Only search for users (students)
       $or: [
         { name: { $regex: search, $options: "i" } },
-        { phone: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } },
       ],
     })
-      .select("_id name phone createdAt")
+      .select("_id name email createdAt")
       .limit(limit)
       .lean();
 
@@ -263,7 +263,7 @@ export const addStudentToClassroom = async (req: CustomRequest, res: Response) =
   try {
     const user = req.user as unknown as UserModel;
     const { classroomId } = req.params;
-    const { userId, phone, name } = req.body;
+    const { userId, email, name } = req.body;
 
     const classroom = await Classroom.findById(classroomId);
 
@@ -280,11 +280,11 @@ export const addStudentToClassroom = async (req: CustomRequest, res: Response) =
 
     let studentToAdd: any = null;
 
-    // Find user by userId, phone, or name
+    // Find user by userId, email, or name
     if (userId) {
       studentToAdd = await User.findById(userId);
-    } else if (phone) {
-      studentToAdd = await User.findOne({ phone: phone.trim() });
+    } else if (email) {
+      studentToAdd = await User.findOne({ email: email.trim().toLowerCase() });
     } else if (name) {
       // Find first user matching name
       studentToAdd = await User.findOne({ name: { $regex: `^${name.trim()}$`, $options: "i" } });
@@ -309,7 +309,7 @@ export const addStudentToClassroom = async (req: CustomRequest, res: Response) =
       data: {
         _id: studentToAdd._id,
         name: studentToAdd.name,
-        phone: studentToAdd.phone,
+        email: studentToAdd.email,
       },
       studentsCount: classroom.students.length,
       message: "Student added successfully",

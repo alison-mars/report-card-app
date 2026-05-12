@@ -462,7 +462,7 @@ export default function TeacherTestSessionsScreen() {
                   <View key={result._id} style={styles.resultRow}>
                     <View style={styles.resultStudentInfo}>
                       <Text style={styles.resultStudentName}>
-                        {result.student.name || result.student.phone}
+                        {result.student.name || result.student.email}
                       </Text>
                       <Text style={styles.resultStudentStatus}>{result.status}</Text>
                     </View>

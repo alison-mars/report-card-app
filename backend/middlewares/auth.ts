@@ -47,10 +47,10 @@ export async function isAuthenticated(
        return;
     }
 
-    if (!user.isPhoneVerified) {
+    if (!user.isEmailVerified) {
        res.status(401).json({
         success: false,
-        message: "Phone number not verified",
+        message: "Email not verified",
       });
       return;
     }

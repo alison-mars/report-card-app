@@ -71,7 +71,7 @@ export default function UsersScreen() {
       <View style={styles.row}>
         <View style={{ flex: 1 }}>
           <Text style={styles.name}>{item.name || "(no name)"}</Text>
-          <Text style={styles.sub}>{item.phone}</Text>
+          <Text style={styles.sub}>{item.email}</Text>
         </View>
         <View style={styles.roleContainer}>
           {ROLES.map((r) => (
@@ -99,7 +99,7 @@ export default function UsersScreen() {
       <Text style={styles.title}>User Management</Text>
       <View style={styles.controls}>
         <TextInput
-          placeholder="Search by name or phone"
+          placeholder="Search by name or email"
           value={search}
           onChangeText={setSearch}
           onSubmitEditing={onSearch}

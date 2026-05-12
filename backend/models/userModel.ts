@@ -3,10 +3,11 @@ import ROLES from "../types/roles";
 
 const userSchema = new mongoose.Schema({
   name: { type: String },
-  phone: { type: String, required: true, unique: true },
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
   otp: { type: String },
   otpExpiry: { type: Date },
-  isPhoneVerified: { type: Boolean, default: false, required: true },
+  isEmailVerified: { type: Boolean, default: false, required: true },
   role: { type: String, enum: ROLES, default: ROLES.USER },
   userProfile: { type: mongoose.Schema.Types.ObjectId, ref: 'UserProfile' },
   teacherProfile: { type: mongoose.Schema.Types.ObjectId, ref: 'TeacherProfile' },

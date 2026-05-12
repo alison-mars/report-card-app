@@ -255,7 +255,7 @@ export const listTestSessions = async (req: CustomRequest, res: Response) => {
       TestSession.find(filter)
         .populate("questionPaper", "title subject questionsCount")
         .populate("classroom", "name studentsCount")
-        .populate("createdBy", "name phone")
+        .populate("createdBy", "name email")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -319,7 +319,7 @@ export const getTestResults = async (req: CustomRequest, res: Response) => {
 
     // Get all results for this test
     const results = await TestResult.find({ testSession: testId })
-      .populate("student", "name phone")
+      .populate("student", "name email")
       .sort({ score: -1 })
       .lean();
 
@@ -381,7 +381,7 @@ export const getTestStatus = async (req: CustomRequest, res: Response) => {
       testSession: testId,
       status: { $in: ["submitted", "timed_out"] },
     })
-      .populate("student", "name phone")
+      .populate("student", "name email")
       .sort({ submittedAt: -1 })
       .limit(10)
       .select("student score attemptedQuestions correctAnswers submittedAt status")
@@ -799,7 +799,7 @@ export const getTeacherAnalytics = async (req: CustomRequest, res: Response) => 
     }
 
     const classrooms = await Classroom.find(classroomFilter)
-      .populate("teacher", "name phone")
+      .populate("teacher", "name email")
       .lean();
     const classroomIds = classrooms.map((c: any) => c._id);
 
@@ -917,14 +917,14 @@ export const getTeacherAnalytics = async (req: CustomRequest, res: Response) => 
       .slice(0, 5);
 
     // Student segmentation - top performers and at-risk students
-    const studentPerformance: Record<string, { scores: number[]; name: string; phone: string }> = {};
+    const studentPerformance: Record<string, { scores: number[]; name: string; email: string }> = {};
     
     for (const session of testSessions.slice(0, 5)) {
       const results = await TestResult.find({
         testSession: session._id,
         status: { $in: ["submitted", "timed_out"] },
       })
-        .populate("student", "name phone")
+        .populate("student", "name email")
         .lean();
       
       for (const result of results) {
@@ -934,7 +934,7 @@ export const getTeacherAnalytics = async (req: CustomRequest, res: Response) => 
           studentPerformance[studentId] = {
             scores: [],
             name: student.name || "Unknown",
-            phone: student.phone || "",
+            email: student.email || "",
           };
         }
         studentPerformance[studentId].scores.push(result.score || 0);
@@ -952,7 +952,7 @@ export const getTeacherAnalytics = async (req: CustomRequest, res: Response) => 
         return {
           _id: id,
           name: data.name,
-          phone: data.phone,
+          email: data.email,
           avgScore,
           testsTaken: data.scores.length,
           trend,
@@ -1070,7 +1070,7 @@ export const getTestOverview = async (req: CustomRequest, res: Response) => {
 
     // Get all results for this test
     const results = await TestResult.find({ testSession: session._id })
-      .populate("student", "name phone")
+      .populate("student", "name email")
       .sort({ score: -1 })
       .lean();
 
@@ -1098,7 +1098,7 @@ export const getTestOverview = async (req: CustomRequest, res: Response) => {
       return {
         _id: result.student?._id,
         name: result.student?.name || "Unknown",
-        phone: result.student?.phone || "",
+        email: result.student?.email || "",
         score: result.score,
         accuracy: result.totalQuestions > 0
           ? Math.round((result.correctAnswers / result.totalQuestions) * 100)
@@ -1676,7 +1676,7 @@ export const getAdminAnalytics = async (req: CustomRequest, res: Response) => {
 
     // Get all classrooms
     const classrooms = await Classroom.find()
-      .populate("teacher", "name phone")
+      .populate("teacher", "name email")
       .lean();
 
     // Get all completed test sessions
@@ -1685,7 +1685,7 @@ export const getAdminAnalytics = async (req: CustomRequest, res: Response) => {
     })
       .populate("questionPaper", "title subject chapter")
       .populate("classroom", "name students teacher")
-      .populate("createdBy", "name phone")
+      .populate("createdBy", "name email")
       .sort({ createdAt: -1 })
       .lean();
 
@@ -1754,7 +1754,7 @@ export const getAdminAnalytics = async (req: CustomRequest, res: Response) => {
     // Teacher overview
     const teacherStats: Record<string, {
       name: string;
-      phone: string;
+      email: string;
       testsCount: number;
       scores: number[];
       lastTestDate: Date | null;
@@ -1768,7 +1768,7 @@ export const getAdminAnalytics = async (req: CustomRequest, res: Response) => {
       if (!teacherStats[teacherId]) {
         teacherStats[teacherId] = {
           name: (teacherInfo as any)?.name || "Unknown",
-          phone: (teacherInfo as any)?.phone || "",
+          email: (teacherInfo as any)?.email || "",
           testsCount: 0,
           scores: [],
           lastTestDate: null,
@@ -1811,7 +1811,7 @@ export const getAdminAnalytics = async (req: CustomRequest, res: Response) => {
       return {
         _id: teacherId,
         name: stats.name,
-        phone: stats.phone,
+        email: stats.email,
         testsCount: stats.testsCount,
         avgScore,
         trend,

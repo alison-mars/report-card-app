@@ -26,7 +26,7 @@ export const listUsers = async (req: Request, res: Response) => {
       const s = String(search).trim();
       query.$or = [
         { name: { $regex: s, $options: "i" } },
-        { phone: { $regex: s, $options: "i" } },
+        { email: { $regex: s, $options: "i" } },
       ];
     }
 
@@ -39,7 +39,7 @@ export const listUsers = async (req: Request, res: Response) => {
         .sort({ createdAt: -1 })
         .skip((pageNum - 1) * limitNum)
         .limit(limitNum)
-        .select("name phone role isPhoneVerified createdAt"),
+        .select("name email role isEmailVerified createdAt"),
       User.countDocuments(query),
     ]);
 
@@ -73,7 +73,7 @@ export const updateUserRole = async (req: Request, res: Response) => {
       userId,
       { role, updatedAt: new Date() },
       { new: true }
-    ).select("name phone role isPhoneVerified");
+    ).select("name email role isEmailVerified");
 
     if (!user) {
       res.status(404).json({ success: false, message: "User not found" });

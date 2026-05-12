@@ -1,11 +1,18 @@
 import z from "zod";
 
-export const onboardingSchema = z.object({
-    phone: z.string().min(10, "Phone number must be at least 10 characters long"),
+export const registerSchema = z.object({
+    email: z.string().email("Invalid email address"),
+    password: z.string().min(6, "Password must be at least 6 characters long"),
     role: z.enum(["student", "teacher"]).optional(),
 });
+
+export const loginSchema = z.object({
+    email: z.string().email("Invalid email address"),
+    password: z.string().min(1, "Password is required"),
+});
+
 export const verifyOtpSchema = z.object({
-    phone: z.string().min(10, "Phone number must be at least 10 characters long"),
+    email: z.string().email("Invalid email address"),
     otp: z.string().length(4, "OTP must be exactly 4 characters long"),
 });
 

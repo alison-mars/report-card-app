@@ -10,10 +10,10 @@ export default function AdminOtp() {
   const [verifying, setVerifying] = useState(false);
   const [resending, setResending] = useState(false);
   const [cooldown, setCooldown] = useState(30);
-  const [phone, setPhone] = useState<string | null>(null);
+  const [email, setEmail] = useState<string | null>(null);
 
   useEffect(() => {
-    (async () => setPhone(await store.get("auth_phone")))();
+    (async () => setEmail(await store.get("auth_email")))();
   }, []);
 
   useEffect(() => {
@@ -27,25 +27,24 @@ export default function AdminOtp() {
   const isOtpValid = useMemo(() => otp.trim().length === 4, [otp]);
 
   const handleVerify = async () => {
-    if (!phone) {
-      Alert.alert("Missing phone", "Please go back and enter your phone.");
+    if (!email) {
+      Alert.alert("Missing email", "Please go back and enter your email.");
       router.replace("/(auth)");
       return;
     }
     if (!isOtpValid || verifying) return;
     try {
       setVerifying(true);
-      const payload = { phone, otp: otp.trim() };
+      const payload = { email, otp: otp.trim() };
       const response = await apiClient.post("/api/user/verify-otp", payload);
       const data = response?.data as any;
       console.log("Verify response:", data);
       if (data?.success && data?.token) {
-        // keep user logged in regardless of role
         await store.set("token", data.token);
         if (data?.role) {
           await store.set("role", String(data.role));
         }
-        await store.delete("auth_phone");
+        await store.delete("auth_email");
 
         if (data?.role === "admin") {
           router.replace("/(admin)");
@@ -64,16 +63,12 @@ export default function AdminOtp() {
   };
 
   const handleResend = async () => {
-    if (!phone || resending || cooldown > 0) return;
+    if (!email || resending || cooldown > 0) return;
     try {
       setResending(true);
-      const response = await apiClient.post("/api/user/onboarding", { phone });
-      if (response?.data?.success) {
-        setCooldown(30);
-        Alert.alert("OTP sent", "A new OTP has been sent.");
-      } else {
-        Alert.alert("Error", response?.data?.message || "Failed to resend OTP");
-      }
+      // Trigger a re-login to resend OTP for unverified accounts
+      Alert.alert("Info", "Please go back and log in again. A verification code will be sent if needed.");
+      setCooldown(30);
     } catch (error: any) {
       const message = error?.response?.data?.message || "Failed to resend OTP";
       Alert.alert("Error", message);
@@ -85,11 +80,11 @@ export default function AdminOtp() {
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <View style={styles.card}>
-        <Text style={styles.title}>Enter OTP</Text>
-        <Text style={styles.subtitle}>We sent a 4-digit code to {phone || "your phone"}</Text>
+        <Text style={styles.title}>Verify Email</Text>
+        <Text style={styles.subtitle}>We sent a 4-digit code to {email || "your email"}</Text>
 
         <View style={styles.inputGroup}>
-          <Text style={styles.label}>One-Time Password</Text>
+          <Text style={styles.label}>Verification Code</Text>
           <TextInput value={otp} onChangeText={setOtp} placeholder="____" keyboardType="number-pad" style={styles.input} maxLength={4} placeholderTextColor="#9ca3af" />
         </View>
 
@@ -98,7 +93,7 @@ export default function AdminOtp() {
         </TouchableOpacity>
 
         <View style={styles.resendRow}>
-          <Text style={styles.resendText}>Didn’t receive the code?</Text>
+          <Text style={styles.resendText}>Didn't receive the code?</Text>
           <TouchableOpacity onPress={handleResend} disabled={resending || cooldown > 0}>
             <Text style={[styles.resendLink, (resending || cooldown > 0) && styles.resendDisabled]}>
               {cooldown > 0 ? `Resend in ${cooldown}s` : resending ? "Resending..." : "Resend"}
@@ -126,5 +121,3 @@ const styles = StyleSheet.create({
   resendLink: { color: "#2563eb", fontWeight: "600" },
   resendDisabled: { color: "#93c5fd" },
 });
-
-

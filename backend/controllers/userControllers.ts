@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
-import { onboardingSchema, verifyOtpSchema } from "../schemas/onboardingSchema";
-import { generateOTP, sendPhoneOtp } from "../utils/otp";
+import { registerSchema, loginSchema, verifyOtpSchema } from "../schemas/onboardingSchema";
+import { generateOTP, sendEmailOtp } from "../utils/otp";
 import { z } from "zod";
 import User from "../models/userModel";
 import type { CustomRequest } from "../types/index";
@@ -8,49 +8,53 @@ import { generateToken } from "../utils/token";
 import { UserProfile, TeacherProfile } from "../models/profileModel";
 import ROLES from "../types/roles";
 
-export const onboarding = async (req: Request, res: Response) => {
+// ── Register: creates user, hashes password, sends OTP email ──
+export const register = async (req: Request, res: Response) => {
   try {
-    const { phone, role } = onboardingSchema.parse(req.body);
-    const user = await User.findOne({ phone: phone });
-    if (!user) {
-      // Map frontend role to backend role
-      const userRole = role === "teacher" ? ROLES.TEACHER : ROLES.USER;
-      const newUser = await User.create({ phone: phone, role: userRole });
-      const otp = generateOTP();
-      await sendPhoneOtp(phone, otp);
-      await newUser.updateOne({
-        otp: otp,
-        otpExpiry: new Date(Date.now() + 15 * 60 * 1000), // OTP valid for 15 minutes
-      });
-      res.status(201).json({
-        success: true,
-        message: "OTP sent successfully",
-        userId: newUser._id.toString(),
+    const { email, password, role } = registerSchema.parse(req.body);
+
+    const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
+    if (existingUser) {
+      res.status(409).json({
+        success: false,
+        message: "An account with this email already exists. Please log in.",
       });
       return;
     }
+
+    // Hash the password
+    const hashedPassword = await Bun.password.hash(password, { algorithm: "bcrypt", cost: 10 });
+
+    // Map frontend role to backend role
+    const userRole = role === "teacher" ? ROLES.TEACHER : ROLES.USER;
+    const newUser = await User.create({
+      email: email.toLowerCase().trim(),
+      password: hashedPassword,
+      role: userRole,
+    });
+
+    // Generate and send OTP for email verification
     const otp = generateOTP();
-    await sendPhoneOtp(phone, otp);
-    const userId = user?._id.toString();
-    if (!userId) {
-      console.log("some problem with userId");
-    }
-    await user.updateOne({
+    await sendEmailOtp(email.toLowerCase().trim(), otp);
+    await newUser.updateOne({
       otp: otp,
       otpExpiry: new Date(Date.now() + 15 * 60 * 1000), // OTP valid for 15 minutes
     });
-    res.status(200).json({
+
+    res.status(201).json({
       success: true,
-      message: "OTP sent successfully",
-      userId: userId,
+      message: "Account created. Please verify your email with the OTP sent.",
+      userId: newUser._id.toString(),
     });
   } catch (error) {
-    console.error("Error during onboarding:", error);
+    console.error("Error during registration:", error);
     if (error instanceof z.ZodError) {
       res.status(400).json({
         success: false,
         message: "Invalid input data",
+        errors: error.errors,
       });
+      return;
     }
     res.status(500).json({
       success: false,
@@ -59,11 +63,12 @@ export const onboarding = async (req: Request, res: Response) => {
   }
 };
 
+// ── Verify Email OTP (only used during registration) ──
 export const verifyOtp = async (req: Request, res: Response) => {
   try {
-    const { phone, otp } = verifyOtpSchema.parse(req.body);
+    const { email, otp } = verifyOtpSchema.parse(req.body);
 
-    const user = await User.findOne({ phone: phone.trim() });
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
     if (!user) {
       res.status(400).json({ success: false, message: "User not found" });
       return;
@@ -87,18 +92,18 @@ export const verifyOtp = async (req: Request, res: Response) => {
 
     user.otp = null;
     user.otpExpiry = null;
-    user.isPhoneVerified = true;
+    user.isEmailVerified = true;
     await user.save();
 
     const token = generateToken(user._id.toString());
 
     res.status(200).json({
       success: true,
-      message: "OTP verified. Logged in successfully.",
+      message: "Email verified. Logged in successfully.",
       user: {
         _id: user._id,
         name: user.name,
-        phone: user.phone,
+        email: user.email,
       },
       token,
       role: user.role,
@@ -110,6 +115,70 @@ export const verifyOtp = async (req: Request, res: Response) => {
     res.status(500).json({ success: false, message: "Internal server error" });
   }
 }
+
+// ── Login: email + password (no OTP) ──
+export const login = async (req: Request, res: Response) => {
+  try {
+    const { email, password } = loginSchema.parse(req.body);
+
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    if (!user) {
+      res.status(401).json({ success: false, message: "Invalid email or password" });
+      return;
+    }
+
+    // Verify password
+    const isPasswordValid = await Bun.password.verify(password, user.password);
+    if (!isPasswordValid) {
+      res.status(401).json({ success: false, message: "Invalid email or password" });
+      return;
+    }
+
+    // Check if email is verified
+    if (!user.isEmailVerified) {
+      // Re-send OTP so user can verify
+      const otp = generateOTP();
+      await sendEmailOtp(user.email, otp);
+      await user.updateOne({
+        otp: otp,
+        otpExpiry: new Date(Date.now() + 15 * 60 * 1000),
+      });
+
+      res.status(403).json({
+        success: false,
+        message: "Email not verified. A new verification code has been sent.",
+        requiresVerification: true,
+        userId: user._id.toString(),
+      });
+      return;
+    }
+
+    const token = generateToken(user._id.toString());
+
+    res.status(200).json({
+      success: true,
+      message: "Logged in successfully.",
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+      },
+      token,
+      role: user.role,
+    });
+  } catch (error) {
+    console.error("Error during login:", error);
+    if (error instanceof z.ZodError) {
+      res.status(400).json({
+        success: false,
+        message: "Invalid input data",
+        errors: error.errors,
+      });
+      return;
+    }
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
 
 export const getProfileStatus = async (req: CustomRequest, res: Response) => {
   try {
@@ -347,9 +416,9 @@ export const getUser = async (req: CustomRequest, res: Response): Promise<void> 
     res.status(200).json({
       _id: user!._id,
       name: user!.name,
-      phone: user!.phone,
+      email: user!.email,
       role: user!.role,
-      isPhoneVerified: user!.isPhoneVerified,
+      isEmailVerified: user!.isEmailVerified,
     });
   }catch (error) {
     console.error("Error getting user profile:", error);
