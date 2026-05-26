@@ -420,7 +420,7 @@ export const getUser = async (req: CustomRequest, res: Response): Promise<void> 
       role: user!.role,
       isEmailVerified: user!.isEmailVerified,
     });
-  }catch (error) {
+  } catch (error) {
     console.error("Error getting user profile:", error);
     res.status(500).json({
       success: false,

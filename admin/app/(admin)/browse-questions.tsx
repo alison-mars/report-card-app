@@ -931,34 +931,26 @@ const BrowseQuestions = () => {
                       </View>
                       
                       {/* Question text */}
-                      <Text 
-                        style={{ 
-                          fontSize: 14, 
-                          color: "#1e293b", 
-                          lineHeight: 20,
-                          marginBottom: 10,
-                        }}
-                        numberOfLines={viewMode === "grid" ? 4 : 2}
-                      >
-                        {q.text}
-                      </Text>
+                      <MathMarkdown
+                        content={q.text}
+                        fontSize={14}
+                        style={{ marginBottom: 10 }}
+                      />
                       
                       {/* Options preview (for MCQ) */}
                       {q.questionType === "objective" && q.options.length > 0 && (
                         <View style={{ marginBottom: 10 }}>
                           {q.options.slice(0, viewMode === "grid" ? 4 : 2).map((opt, idx) => (
-                            <Text 
-                              key={idx} 
-                              style={{ 
-                                fontSize: 12, 
-                                color: q.correctIndex === idx ? "#16a34a" : "#64748b",
-                                marginBottom: 2,
-                              }}
-                              numberOfLines={1}
-                            >
-                              {String.fromCharCode(65 + idx)}. {opt}
-                              {q.correctIndex === idx && " ✓"}
-                            </Text>
+                            <View key={idx} style={{ flexDirection: "row", alignItems: "center", marginBottom: 2 }}>
+                              <Text style={{ fontSize: 12, color: q.correctIndex === idx ? "#16a34a" : "#64748b", marginRight: 2 }}>
+                                {String.fromCharCode(65 + idx)}.
+                              </Text>
+                              <MathMarkdown
+                                content={opt + (q.correctIndex === idx ? " ✓" : "")}
+                                fontSize={12}
+                                style={{ flex: 1, color: q.correctIndex === idx ? "#16a34a" : "#64748b" }}
+                              />
+                            </View>
                           ))}
                         </View>
                       )}
@@ -1303,7 +1295,7 @@ const BrowseQuestions = () => {
                                 style={{ flex: 1, fontSize: 14 }}
                               />
                             ) : (
-                              <Text style={{ flex: 1, fontSize: 14, color: "#1e293b" }}>{opt}</Text>
+                              <MathMarkdown content={opt} fontSize={14} style={{ flex: 1 }} />
                             )}
                             {editMode && (
                               <Pressable

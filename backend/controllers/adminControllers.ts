@@ -361,7 +361,7 @@ export const uploadQuestionPdf = async (req: CustomRequest, res: Response) => {
       const hasSelectableText = extractedText.trim().length > 50; // Threshold to detect if PDF has real text
 
       // Build prompt for OpenRouter (multimodal)
-      const model = "google/gemini-3-pro-preview";
+      const model = "google/gemini-2.5-flash";
       const baseSystemPrompt =
         "You are an expert at parsing printed exam pages. You will receive: " +
         "(1) The EXTRACTED TEXT from the PDF's text layer - this may contain garbled Unicode math symbols. " +
@@ -460,11 +460,13 @@ export const uploadQuestionPdf = async (req: CustomRequest, res: Response) => {
       try {
         const resp = await axios.post("https://openrouter.ai/api/v1/chat/completions", payload, { headers });
         const content: string = resp?.data?.choices?.[0]?.message?.content || "[]";
+        console.log(`[uploadQuestionPdf] Page ${pageNum} raw AI response:`, content.substring(0, 500));
         const jsonText = extractJsonArray(content);
         extracted = JSON.parse(jsonText);
-      } catch (err) {
+      } catch (err: any) {
         // If extraction fails for the page, continue to next; log for debugging
-        console.error("OpenRouter extraction failed for page", pageNum, err);
+        const errBody = err?.response?.data;
+        console.error("OpenRouter extraction failed for page", pageNum, errBody ? JSON.stringify(errBody) : err);
         extracted = [];
       }
 
@@ -758,7 +760,7 @@ export const uploadQuestionPdfStream = async (req: CustomRequest, res: Response)
       const hasSelectableText = extractedText.trim().length > 50; // Threshold to detect if PDF has real text
 
       // Build prompt for OpenRouter (multimodal)
-      const model = "google/gemini-3-pro-preview";
+      const model = "google/gemini-2.5-flash";
       const baseSystemPrompt =
         "You are an expert at parsing printed exam pages. You will receive: " +
         "(1) The EXTRACTED TEXT from the PDF's text layer - this may contain garbled Unicode math symbols. " +
@@ -853,12 +855,15 @@ export const uploadQuestionPdfStream = async (req: CustomRequest, res: Response)
       try {
         const resp = await axios.post("https://openrouter.ai/api/v1/chat/completions", payload, { headers });
         const content: string = resp?.data?.choices?.[0]?.message?.content || "[]";
+        console.log(`[uploadQuestionPdfStream] Page ${pageNum} raw AI response:`, content.substring(0, 500));
         const jsonText = extractJsonArray(content);
         extracted = JSON.parse(jsonText);
-      } catch (err) {
-        console.error("OpenRouter extraction failed for page", pageNum, err);
+      } catch (err: any) {
+        const errBody = err?.response?.data;
+        const errMsg = errBody ? JSON.stringify(errBody) : String(err);
+        console.error("OpenRouter extraction failed for page", pageNum, errMsg);
         extracted = [];
-        sendEvent("page_error", { pageNum, error: "AI extraction failed for this page" });
+        sendEvent("page_error", { pageNum, error: `AI extraction failed: ${errMsg.substring(0, 200)}` });
       }
 
       for (const item of extracted) {
@@ -3432,88 +3437,112 @@ export const uploadPdfToQuestionPaper = async (req: CustomRequest, res: Response
 
       const hasSelectableText = extractedText.trim().length > 50;
 
-      // Build AI prompt
+      // Build AI prompt - same logic as uploadQuestionPdfStream for consistency
       const baseSystemPrompt =
-        "You are an expert at extracting questions from educational documents. " +
-        "CRITICAL MATH FORMATTING: Convert ALL mathematical expressions to proper LaTeX format wrapped in $ delimiters. " +
-        "Examples: 'x 2' → '$x^2$', 'T 1' → '$T_1$', fractions like 'x/y' → '$\\frac{x}{y}$'. " +
-        "Replace garbled Unicode symbols (≡, ∈, ⊆, →) with LaTeX equivalents. " +
-        "Greek letters: α→$\\alpha$, β→$\\beta$, θ→$\\theta$. " +
-        "Use the IMAGE to understand actual mathematical content when text is garbled. " +
+        "You are an expert at parsing printed exam pages. You will receive: " +
+        "(1) The EXTRACTED TEXT from the PDF's text layer - this may contain garbled Unicode math symbols. " +
+        "(2) An IMAGE of the page - use this to understand the ACTUAL content, especially mathematical expressions. " +
+        "CRITICAL MATH FORMATTING RULES: " +
+        "- Convert ALL mathematical expressions to proper LaTeX format wrapped in $ delimiters. " +
+        "- Examples: 'x 2 /6 + y 2 /3 = 1' should become '$\\frac{x^2}{6} + \\frac{y^2}{3} = 1$'. " +
+        "- Subscripts like 'T 1' become '$T_1$', superscripts like 'x 2' become '$x^2$'. " +
+        "- Set notation like '{0,1,2,3}' becomes '$\\{0,1,2,3\\}$'. " +
+        "- Intervals like '(0,1)' in math context become '$(0,1)$'. " +
+        "- Replace garbled symbols (≡, ∈, ⊆, →, etc) with their proper LaTeX equivalents ($\\equiv$, $\\in$, $\\subseteq$, $\\to$). " +
+        "- Greek letters should be in LaTeX: α→$\\alpha$, β→$\\beta$, θ→$\\theta$, etc. " +
+        "- USE THE IMAGE to determine the correct mathematical meaning when the extracted text is garbled. " +
+        "Return ONLY strict JSON (no prose). For each question, include: " +
+        "`question` (string with proper LaTeX math), `questionType` ('objective' or 'subjective'), " +
+        "`options` (array of strings with proper LaTeX math, ONLY for objective questions, empty array for subjective), " +
+        "and, if clearly present for objective questions, `correctOption` (string matching one of the options). " +
+        "SUBJECTIVE questions are: essay questions, short-answer questions, numerical problems without options, derivations, proofs, 'explain' questions, 'describe' questions, etc. " +
+        "OBJECTIVE questions are: MCQs with A/B/C/D options, true/false, match the following with options. " +
+        "If a diagram is associated with a question, set `hasDiagram` to true and also include `diagramBox` " +
+        "as an object with normalized coordinates relative to the image dimensions: " +
+        "{ x: number, y: number, width: number, height: number } with 0 <= values <= 1. " +
+        "The box should tightly enclose only the figure/diagram related to that question (exclude text as much as possible). " +
         "Focus only on printed/typed content; ignore handwritten notes.";
 
       const extractedTextBlock = hasSelectableText
         ? `\n\n--- EXTRACTED TEXT FROM PDF (reference only, may have garbled math symbols) ---\n${extractedText}\n--- END EXTRACTED TEXT ---\n`
         : "\n\n--- No selectable text found in PDF, using OCR from image ---\n";
 
-      const isFirstPage = pageNum === start;
-      const instruction = isFirstPage
-        ? "Extract ALL questions (both objective MCQ and subjective open-ended) from this page. " +
-          "IMPORTANT: Use the IMAGE as the primary source for mathematical content. Convert all math to LaTeX format. " +
-          extractedTextBlock +
-          "Respond with a JSON array using this exact schema: " +
-          "[{ \"question\": string, \"questionType\": \"objective\" | \"subjective\", \"options\": string[], \"correctOption\"?: string, \"hasDiagram\": boolean, " +
-          "\"diagramBox\"?: { \"x\": number, \"y\": number, \"width\": number, \"height\": number } }]. " +
-          "For subjective questions (essay, short-answer, numerical without options), set questionType to 'subjective' and options to empty array []. " +
-          "For objective questions (MCQ with options), set questionType to 'objective' and include all options. " +
-          "Do not include any text outside the JSON. If no questions found, return []. " +
-          "When a diagram is present, provide a precise `diagramBox` around the diagram only."
-        : "Continue extracting questions from this page. Check if the first content continues a question from the previous page. " +
-          "Convert all math to LaTeX format. " +
-          extractedTextBlock +
-          "Return JSON array with same schema. If content continues from previous page, include the full merged question.";
+      const firstPageInstruction =
+        "Extract ALL questions (both objective MCQ and subjective open-ended) from this page. " +
+        "IMPORTANT: Use the IMAGE as the primary source for understanding mathematical content. The extracted text may have garbled symbols. " +
+        "Convert all mathematical expressions to proper LaTeX format (e.g., $x^2$, $\\frac{a}{b}$, $T_1$, $\\alpha$). " +
+        extractedTextBlock +
+        "Respond with a JSON array using this exact schema: " +
+        "[{ \"question\": string, \"questionType\": \"objective\" | \"subjective\", \"options\": string[], \"correctOption\"?: string, \"hasDiagram\": boolean, " +
+        "\"diagramBox\"?: { \"x\": number, \"y\": number, \"width\": number, \"height\": number } }]. " +
+        "For subjective questions (essay, short-answer, numerical without options), set questionType to 'subjective' and options to empty array []. " +
+        "For objective questions (MCQ with options), set questionType to 'objective' and include all options. " +
+        "Do not include any text outside the JSON. If no questions found, return []. " +
+        "When a diagram is present, provide a precise `diagramBox` around the diagram only.";
 
-      const messages: any[] = [{ role: "system", content: baseSystemPrompt }];
+      const continuationInstruction =
+        "The next page may contain the continuation of a question that started on the previous page. " +
+        "You are given: (1) the previous page image, (2) the JSON extracted from the previous page, (3) the current page image, and (4) the EXTRACTED TEXT from the current page. " +
+        "IMPORTANT: Use the IMAGE as the primary source. Convert all math to LaTeX format. The extracted text may have garbled symbols. " +
+        "Using these, return ONLY the questions that are NEW on the current page or that CONTINUE from the previous page but were incomplete there. " +
+        "Include both objective (MCQ) and subjective (open-ended) questions. " +
+        "Do NOT duplicate any question that is already fully captured in the previous JSON. " +
+        "Output must be a JSON array with the same exact schema as before (including questionType field). " +
+        "If nothing new or continued is found, return [].";
 
-      // Include previous page for context
-      if (previousPageDataUrl && previousPageExtraction.length > 0) {
-        messages.push({
-          role: "user",
-          content: [
-            { type: "text", text: "Previous page for context (last question may continue):" },
-            { type: "image_url", image_url: { url: previousPageDataUrl } },
-          ],
-        });
-        messages.push({
-          role: "assistant",
-          content: JSON.stringify(previousPageExtraction),
-        });
-      }
-
-      messages.push({
-        role: "user",
-        content: [
-          { type: "text", text: instruction },
-          { type: "image_url", image_url: { url: dataUrl } },
+      const payload = {
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: baseSystemPrompt },
+          pageNum === start
+            ? {
+                role: "user",
+                content: [
+                  { type: "text", text: firstPageInstruction },
+                  { type: "image_url", image_url: { url: dataUrl } },
+                ],
+              }
+            : {
+                role: "user",
+                content: [
+                  { type: "text", text: continuationInstruction },
+                  // Previous page image
+                  ...(previousPageDataUrl ? [{ type: "image_url", image_url: { url: previousPageDataUrl } } as any] : []),
+                  // Previous JSON extraction to avoid duplicates and help reconstruction
+                  {
+                    type: "text",
+                    text:
+                      "Previous page extracted JSON (may be incomplete for split questions):\n" +
+                      JSON.stringify(previousPageExtraction || [], null, 2) +
+                      extractedTextBlock,
+                  },
+                  // Current page image
+                  { type: "image_url", image_url: { url: dataUrl } },
+                ],
+              },
         ],
-      });
+        temperature: 0,
+      };
 
-      // Call AI for extraction
-      const aiResp = await axios.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        {
-          model: "google/gemini-2.0-flash-001",
-          messages,
-          temperature: 0.1,
-          max_tokens: 8000,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${openrouterApiKey}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
+      const headers = {
+        Authorization: `Bearer ${openrouterApiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": process.env.OPENROUTER_REFERER || "http://localhost",
+        "X-Title": process.env.OPENROUTER_APP_NAME || "ReportCardApp",
+      };
 
-      const content = aiResp.data?.choices?.[0]?.message?.content || "";
       let extracted: any[] = [];
       try {
-        const jsonMatch = content.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-          extracted = JSON.parse(jsonMatch[0]);
-        }
-      } catch (parseErr) {
-        console.error("Failed to parse AI response:", parseErr);
+        const aiResp = await axios.post("https://openrouter.ai/api/v1/chat/completions", payload, { headers });
+        const content: string = aiResp?.data?.choices?.[0]?.message?.content || "[]";
+        console.log(`[uploadPdfToQuestionPaper] Page ${pageNum} raw AI response:`, content.substring(0, 500));
+        const jsonText = extractJsonArray(content);
+        extracted = JSON.parse(jsonText);
+      } catch (err: any) {
+        const errBody = err?.response?.data;
+        console.error("OpenRouter extraction failed for page", pageNum, errBody ? JSON.stringify(errBody) : err);
+        extracted = [];
+        sendEvent("page_error", { pageNum, error: `AI extraction failed for page ${pageNum}` });
       }
 
       // Process extracted questions
