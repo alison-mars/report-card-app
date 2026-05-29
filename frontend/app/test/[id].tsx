@@ -58,12 +58,20 @@ export default function TestScreen() {
 
       try {
         const resp = await startTestForStudent(testId);
-        setTestData(resp.data);
-        setTimeRemaining(resp.data.timeRemainingSeconds);
+        // Normalize questions: some backends return `id` instead of `_id`
+        const normalizedData = {
+          ...resp.data,
+          questions: resp.data.questions.map((q: any) => ({
+            ...q,
+            _id: q._id || q.id || String(q.index ?? Math.random()),
+          })),
+        };
+        setTestData(normalizedData);
+        setTimeRemaining(normalizedData.timeRemainingSeconds);
         
         // Initialize answers map
         const initialAnswers = new Map<string, number | null>();
-        resp.data.questions.forEach((q) => {
+        normalizedData.questions.forEach((q) => {
           initialAnswers.set(q._id, null);
         });
         setAnswers(initialAnswers);
@@ -213,7 +221,18 @@ export default function TestScreen() {
     );
   }
 
-  const currentQuestion = testData.questions[currentQuestionIndex];
+  if (!testData.questions || testData.questions.length === 0) {
+    return (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorText}>No questions found in this test</Text>
+        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+          <Text style={styles.backBtnText}>Go Back</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  const currentQuestion = testData.questions[currentQuestionIndex] ?? testData.questions[0];
   const selectedOption = answers.get(currentQuestion._id);
   const answeredCount = Array.from(answers.values()).filter(v => v !== null).length;
 
