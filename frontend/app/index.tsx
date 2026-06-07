@@ -15,6 +15,7 @@ import apiClient, {
   type ActiveTest,
   type StudentDashboardData,
 } from "@/api/client";
+import { store } from "@/utils";
 import { useAuthStore, type AuthState, type AuthUser } from "../store/auth";
 import type { ProfileStatusResponse } from "@/types/api";
 
@@ -26,7 +27,7 @@ const Index = () => {
   const [loadingTests, setLoadingTests] = useState(false);
   const [dashboard, setDashboard] = useState<StudentDashboardData | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  
+
   const setUser = useAuthStore((state: AuthState) => state.setUser);
   const setProfileStatus = useAuthStore((state: AuthState) => (state as any).setProfileStatus);
   const user = useAuthStore((state: AuthState) => state.user);
@@ -55,12 +56,21 @@ const Index = () => {
 
   useEffect(() => {
     let isMounted = true;
-    
+
     const checkAuth = async () => {
       try {
+        const token = await store.get("token");
+        if (!token) {
+          if (!isMounted) return;
+          setUser(null);
+          setLoading(false);
+          router.replace("/auth/Auth");
+          return;
+        }
+
         const response = await apiClient.get("/api/user/user");
         if (!isMounted) return;
-        
+
         if (response.data) {
           setUser(response.data as AuthUser);
         }
@@ -68,7 +78,7 @@ const Index = () => {
         try {
           const profileRes = await apiClient.get<ProfileStatusResponse>("/api/user/profile-status");
           if (!isMounted) return;
-          
+
           if (profileRes?.data?.success) {
             setProfileStatus(profileRes.data);
             if (!profileRes.data.hasProfile) {
@@ -87,8 +97,8 @@ const Index = () => {
               return;
             }
           }
-        } catch {}
-        
+        } catch { }
+
         if (!isMounted) return;
         setLoading(false);
         // Fetch active tests and dashboard once authenticated
@@ -102,7 +112,7 @@ const Index = () => {
       }
     };
     checkAuth();
-    
+
     return () => {
       isMounted = false;
     };
@@ -196,7 +206,7 @@ const Index = () => {
   const hasCompletedTests = dashboard && dashboard.recentTests.length > 0;
 
   return (
-    <ScrollView 
+    <ScrollView
       style={styles.scrollView}
       contentContainerStyle={styles.container}
       refreshControl={
@@ -259,14 +269,14 @@ const Index = () => {
 
                 <View style={styles.testFooter}>
                   {test.studentStatus === "in_progress" ? (
-                    <Pressable 
+                    <Pressable
                       onPress={() => handleStartTest(test)}
                       style={[styles.testButton, styles.continueButton]}
                     >
                       <Text style={styles.testButtonText}>Continue Test →</Text>
                     </Pressable>
                   ) : test.canStart ? (
-                    <Pressable 
+                    <Pressable
                       onPress={() => handleStartTest(test)}
                       style={[styles.testButton, styles.startButton]}
                     >
@@ -315,19 +325,19 @@ const Index = () => {
           <View style={styles.trendCard}>
             <View style={styles.trendChart}>
               {dashboard.performanceTrend.map((item, idx) => (
-                <Pressable 
-                  key={idx} 
+                <Pressable
+                  key={idx}
                   style={styles.trendBarContainer}
                   onPress={() => handleViewTestDetail(item.testId)}
                 >
-                  <View 
+                  <View
                     style={[
-                      styles.trendBar, 
-                      { 
+                      styles.trendBar,
+                      {
                         height: `${Math.max(item.score, 8)}%`,
                         backgroundColor: getScoreColor(item.score),
                       }
-                    ]} 
+                    ]}
                   />
                   <Text style={styles.trendBarLabel}>{item.score}%</Text>
                   <Text style={styles.trendBarDate} numberOfLines={1}>
@@ -399,10 +409,10 @@ const Index = () => {
             {dashboard.insights.map((insight, idx) => {
               const colors = getInsightColor(insight.type);
               return (
-                <View 
-                  key={idx} 
+                <View
+                  key={idx}
                   style={[
-                    styles.insightCard, 
+                    styles.insightCard,
                     { backgroundColor: colors.bg, borderColor: colors.border }
                   ]}
                 >
@@ -438,8 +448,8 @@ const Index = () => {
           <Text style={styles.sectionTitle}>Recent Tests</Text>
           <View style={styles.recentTestsContainer}>
             {dashboard.recentTests.map((test) => (
-              <Pressable 
-                key={test._id} 
+              <Pressable
+                key={test._id}
                 style={styles.recentTestCard}
                 onPress={() => handleViewTestDetail(test._id)}
               >

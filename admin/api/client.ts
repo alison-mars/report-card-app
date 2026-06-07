@@ -8,6 +8,7 @@ const apiClient = axios.create({
 });
 
 apiClient.interceptors.request.use(async (config: any) => {
+    config.headers = config.headers || {};
     const authToken = await store.get("token");
     if (authToken) {
         config.headers.Authorization = `Bearer ${authToken}`;
@@ -27,7 +28,7 @@ apiClient.interceptors.response.use(
     (response) => {
         try {
             console.log("API Response:", response?.data);
-        } catch {}
+        } catch { }
         return response;
     },
     (error) => {
@@ -37,7 +38,7 @@ apiClient.interceptors.response.use(
             } else {
                 console.log("API Error:", error?.message || error?.toString());
             }
-        } catch {}
+        } catch { }
         return Promise.reject(error);
     }
 );
