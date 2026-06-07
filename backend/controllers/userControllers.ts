@@ -13,8 +13,9 @@ import ROLES from "../types/roles";
 export const register = async (req: Request, res: Response) => {
   try {
     const { email, password, role } = registerSchema.parse(req.body);
+    const normalizedEmail = email.toLowerCase().trim();
 
-    const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
+    const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
       res.status(409).json({
         success: false,
@@ -27,21 +28,25 @@ export const register = async (req: Request, res: Response) => {
     // The deployed API can run outside Bun, so avoid depending on Bun.password at runtime.
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Map frontend role to backend role
+    const otp = generateOTP();
     const userRole = role === "teacher" ? ROLES.TEACHER : ROLES.USER;
     const newUser = await User.create({
-      email: email.toLowerCase().trim(),
+      email: normalizedEmail,
       password: hashedPassword,
       role: userRole,
-    });
-
-    // Generate and send OTP for email verification
-    const otp = generateOTP();
-    await sendEmailOtp(email.toLowerCase().trim(), otp);
-    await newUser.updateOne({
-      otp: otp,
+      otp,
       otpExpiry: new Date(Date.now() + 15 * 60 * 1000), // OTP valid for 15 minutes
     });
+
+    const otpSent = await sendEmailOtp(normalizedEmail, otp);
+    if (!otpSent) {
+      await User.findByIdAndDelete(newUser._id);
+      res.status(502).json({
+        success: false,
+        message: "Unable to send verification email. Please try again later.",
+      });
+      return;
+    }
 
     res.status(201).json({
       success: true,
@@ -58,9 +63,18 @@ export const register = async (req: Request, res: Response) => {
       });
       return;
     }
+
+    if (error && typeof error === "object" && "code" in error && (error as any).code === 11000) {
+      res.status(409).json({
+        success: false,
+        message: "An account with this email already exists. Please log in.",
+      });
+      return;
+    }
+
     res.status(500).json({
       success: false,
-      message: "Internal server error",
+      message: "Registration failed. Please try again later.",
     });
   }
 };
@@ -140,7 +154,14 @@ export const login = async (req: Request, res: Response) => {
     if (!user.isEmailVerified) {
       // Re-send OTP so user can verify
       const otp = generateOTP();
-      await sendEmailOtp(user.email, otp);
+      const otpSent = await sendEmailOtp(user.email, otp);
+      if (!otpSent) {
+        res.status(502).json({
+          success: false,
+          message: "Unable to send verification email. Please try again later.",
+        });
+        return;
+      }
       await user.updateOne({
         otp: otp,
         otpExpiry: new Date(Date.now() + 15 * 60 * 1000),
