@@ -17,6 +17,31 @@ export const register = async (req: Request, res: Response) => {
 
     const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
+      if (!existingUser.isEmailVerified) {
+        const otp = generateOTP();
+        const otpSent = await sendEmailOtp(normalizedEmail, otp);
+        if (!otpSent) {
+          res.status(502).json({
+            success: false,
+            message: "Unable to send verification email. Please try again later.",
+          });
+          return;
+        }
+
+        existingUser.password = await bcrypt.hash(password, 10);
+        existingUser.role = role === "teacher" ? ROLES.TEACHER : ROLES.USER;
+        existingUser.otp = otp;
+        existingUser.otpExpiry = new Date(Date.now() + 15 * 60 * 1000);
+        await existingUser.save();
+
+        res.status(200).json({
+          success: true,
+          message: "Account already exists but is not verified. A new OTP has been sent.",
+          userId: existingUser._id.toString(),
+        });
+        return;
+      }
+
       res.status(409).json({
         success: false,
         message: "An account with this email already exists. Please log in.",
