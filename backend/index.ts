@@ -24,11 +24,41 @@ dotenv.config();
 
 connectDatabse();
 
+const allowedOrigins = new Set([
+  "https://app.parikshalab.com",
+  "https://admin.parikshalab.com",
+  "http://localhost:8081",
+  "http://localhost:19006",
+  "http://localhost:3000",
+  "http://localhost:5173",
+]);
+
+const corsOptions: cors.CorsOptions = {
+  origin(origin, callback) {
+    // Allow server-to-server tools, curl, health checks, and same-origin requests with no Origin header.
+    if (!origin || allowedOrigins.has(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "Accept",
+    "Origin",
+    "X-Requested-With",
+    "ngrok-skip-browser-warning",
+  ],
+  credentials: false,
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 app.use(express.json({ limit: "25mb" }));
-app.use(cors({
-  origin: "*",
-  credentials: true,
-}));
 app.get("/", (req, res) => {
   res.send("Hello World");
 });
