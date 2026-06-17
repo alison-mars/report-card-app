@@ -28,6 +28,7 @@ const allowedOrigins = new Set([
   "https://app.parikshalab.com",
   "https://admin.parikshalab.com",
   "http://localhost:8081",
+  "http://localhost:8082",
   "http://localhost:19006",
   "http://localhost:3000",
   "http://localhost:5173",

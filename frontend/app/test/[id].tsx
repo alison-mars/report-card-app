@@ -9,6 +9,7 @@ import {
   Alert,
   Image,
   BackHandler,
+  Platform,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { startTestForStudent, submitTest, type TestQuestion, type StartTestResponse } from "@/api/client";
@@ -163,42 +164,55 @@ export default function TestScreen() {
           selectedIndex: answers.get(q._id) ?? null,
         }));
 
-        const resp = await submitTest(testId!, answersArray);
-        
-        // Navigate to results
+        await submitTest(testId!, answersArray);
+
         router.replace({
           pathname: "/test/result/[id]" as any,
           params: { id: testId! },
         });
       } catch (e: any) {
         setIsSubmitting(false);
-        Alert.alert("Error", e?.response?.data?.message || "Failed to submit test");
+        const errorMsg = e?.response?.data?.message || "Failed to submit test";
+        if (Platform.OS === "web") {
+          window.alert("Error: " + errorMsg);
+        } else {
+          Alert.alert("Error", errorMsg);
+        }
       }
     };
 
     if (isAutoSubmit) {
-      Alert.alert("Time's Up!", "Your test has been automatically submitted.", [
-        { text: "OK", onPress: doSubmit }
-      ]);
-    } else if (unansweredCount > 0) {
-      Alert.alert(
-        "Submit Test?",
-        `You have ${unansweredCount} unanswered question${unansweredCount > 1 ? 's' : ''}. Are you sure you want to submit?`,
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Submit", style: "destructive", onPress: doSubmit }
-        ]
-      );
-    } else {
-      Alert.alert(
-        "Submit Test?",
-        "Are you sure you want to submit your test?",
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Submit", onPress: doSubmit }
-        ]
-      );
+      if (Platform.OS === "web") {
+        window.alert("Time's Up! Your test has been automatically submitted.");
+        await doSubmit();
+      } else {
+        Alert.alert("Time's Up!", "Your test has been automatically submitted.", [
+          { text: "OK", onPress: doSubmit },
+        ]);
+      }
+      return;
     }
+
+    const confirmMessage = unansweredCount > 0
+      ? `You have ${unansweredCount} unanswered question${unansweredCount > 1 ? "s" : ""}. Are you sure you want to submit?`
+      : "Are you sure you want to submit your test?";
+
+    const confirmed = Platform.OS === "web"
+      ? window.confirm(confirmMessage)
+      : await new Promise<boolean>((resolve) => {
+          Alert.alert(
+            "Submit Test?",
+            confirmMessage,
+            [
+              { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+              { text: "Submit", style: unansweredCount > 0 ? "destructive" : "default", onPress: () => resolve(true) },
+            ]
+          );
+        });
+
+    if (!confirmed) return;
+
+    await doSubmit();
   }, [testData, answers, testId, router, isSubmitting]);
 
   if (loading) {

@@ -16,6 +16,7 @@ import {
   generateQuestionPaper, 
   generateQuestionPaperv1_5, 
   generateQuestionPaperv2,
+  generateQuestionPaperFromDb,
   // Question Paper CRUD
   createQuestionPaper,
   uploadPdfToQuestionPaper,
@@ -59,6 +60,7 @@ adminRouter.post("/questions/batch", isAuthenticated, isAdmin, saveQuestionsBatc
 adminRouter.post("/papers/generate", isAuthenticated, isAdminOrTeacher, generateQuestionPaper);
 adminRouter.post("/papers/generate-v1.5", isAuthenticated, isAdminOrTeacher, generateQuestionPaperv1_5);
 adminRouter.post("/papers/generate-v2", isAuthenticated, isAdminOrTeacher, generateQuestionPaperv2);
+adminRouter.post("/papers/generate-from-db", isAuthenticated, isAdminOrTeacher, generateQuestionPaperFromDb);
 
 // Question Paper CRUD routes - accessible by both admin and teacher
 adminRouter.post("/papers", isAuthenticated, isAdminOrTeacher, createQuestionPaper);

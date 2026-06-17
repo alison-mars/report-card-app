@@ -2,14 +2,17 @@ import { useMemo, useState, useCallback } from "react";
 import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, Platform, Alert } from "react-native";
 import { useRouter } from "expo-router";
 import { SUBJECTS, SUBJECT_TO_CHAPTERS, useQuestionEditorStore, type QuestionType } from "@/store/questionEditor";
+import MathMarkdown from "@/components/MathMarkdown";
 import { 
   generateQuestionPaper, 
   generateQuestionPaperV1_5, 
   generateQuestionPaperV2,
+  generateQuestionPaperFromDb,
   createQuestionPaper,
   type GeneratedPaperItem,
   type GeneratedPaperItemV1_5,
   type GeneratedPaperItemV2,
+  type GeneratedPaperItemFromDb,
 } from "@/api/admin";
 
 const DIFFICULTIES: ("easy" | "medium" | "hard")[] = ["easy", "medium", "hard"];
@@ -20,6 +23,8 @@ const PAPER_TYPES: { value: QuestionType; label: string; description: string }[]
 ];
 
 type ModelVersion = "v1" | "v1.5" | "v2";
+type PaperSource = "database" | "ai";
+type CountMode = "total" | "by_difficulty";
 const MODEL_OPTIONS: { value: ModelVersion; label: string; endpoint: string }[] = [
   { value: "v1", label: "Model 1", endpoint: "/api/admin/papers/generate" },
   { value: "v1.5", label: "Model 1.5", endpoint: "/api/admin/papers/generate-v1.5" },
@@ -27,7 +32,7 @@ const MODEL_OPTIONS: { value: ModelVersion; label: string; endpoint: string }[] 
 ];
 
 // Editable question type
-type EditableQuestion = (GeneratedPaperItem | GeneratedPaperItemV1_5 | GeneratedPaperItemV2) & {
+type EditableQuestion = (GeneratedPaperItem | GeneratedPaperItemV1_5 | GeneratedPaperItemV2 | GeneratedPaperItemFromDb) & {
   isEditing?: boolean;
 };
 
@@ -37,9 +42,12 @@ export default function PaperGeneratorScreen() {
   const addChapterForSubject = useQuestionEditorStore((s) => s.addChapterForSubject);
 
   const [paperType, setPaperType] = useState<QuestionType>("objective");
+  const [paperSource, setPaperSource] = useState<PaperSource>("database");
+  const [countMode, setCountMode] = useState<CountMode>("total");
   const [subject, setSubject] = useState<string | null>(null);
   const [chapter, setChapter] = useState<string | null>(null);
   const [overallDifficulty, setOverallDifficulty] = useState<"easy" | "medium" | "hard" | null>(null);
+  const [totalQuestions, setTotalQuestions] = useState<string>("12");
   const [easyCount, setEasyCount] = useState<string>("0");
   const [mediumCount, setMediumCount] = useState<string>("0");
   const [hardCount, setHardCount] = useState<string>("0");
@@ -100,7 +108,8 @@ export default function PaperGeneratorScreen() {
     addChapterForSubject(subject, chapter);
   };
 
-  const totalCount = (parseInt(easyCount || "0") || 0) + (parseInt(mediumCount || "0") || 0) + (parseInt(hardCount || "0") || 0);
+  const difficultyTotalCount = (parseInt(easyCount || "0") || 0) + (parseInt(mediumCount || "0") || 0) + (parseInt(hardCount || "0") || 0);
+  const totalCount = countMode === "total" ? (parseInt(totalQuestions || "0") || 0) : difficultyTotalCount;
 
   const onGenerate = async () => {
     if (!subject) {
@@ -108,18 +117,64 @@ export default function PaperGeneratorScreen() {
       return;
     }
     if (totalCount <= 0) {
-      Alert.alert("Add questions", "Set at least one of easy/medium/hard counts.");
+      Alert.alert(
+        "Add questions",
+        countMode === "total"
+          ? "Set the total number of questions."
+          : "Set at least one of easy/medium/hard counts."
+      );
       return;
     }
     try {
       setIsGenerating(true);
+
+      if (paperSource === "database") {
+        const resp = await generateQuestionPaperFromDb({
+          subject,
+          chapter,
+          overallDifficulty,
+          questionType: paperType,
+          countMode,
+          totalCount: parseInt(totalQuestions || "0") || 0,
+          easyCount: parseInt(easyCount || "0") || 0,
+          mediumCount: parseInt(mediumCount || "0") || 0,
+          hardCount: parseInt(hardCount || "0") || 0,
+          tags,
+          topics,
+        });
+        const items = Array.isArray(resp?.data) ? resp.data : [];
+        setResults(items);
+        const meta = resp?.meta;
+        const shortageNote =
+          meta?.shortages && Object.keys(meta.shortages).length > 0
+            ? `\nShort by: ${Object.entries(meta.shortages).map(([k, v]) => `${k} ${v}`).join(", ")}`
+            : "";
+        const sample = items.slice(0, 3).map((q: any, i: number) => `${i + 1}. ${q?.text?.slice(0, 120) ?? ""}${(q?.text?.length ?? 0) > 120 ? "..." : ""}`).join("\n");
+        Alert.alert(
+          "Paper generated from database",
+          [
+            `Requested: ${totalCount}`,
+            `Found in pool: ${meta?.availableInPool ?? "?"}`,
+            `Selected: ${items.length}`,
+            meta?.generated?.byDifficulty?.unset
+              ? `Without difficulty tag: ${meta.generated.byDifficulty.unset}`
+              : "",
+            shortageNote,
+            items.length ? "\nPreview:" : "\nNo matching questions found. Try fewer filters or upload more questions.",
+            sample,
+          ].filter(Boolean).join("\n"),
+          [{ text: "OK" }]
+        );
+        return;
+      }
+
       const payload = {
         subject,
         chapter,
         overallDifficulty,
-        easyCount: parseInt(easyCount || "0") || 0,
-        mediumCount: parseInt(mediumCount || "0") || 0,
-        hardCount: parseInt(hardCount || "0") || 0,
+        easyCount: countMode === "total" ? 0 : parseInt(easyCount || "0") || 0,
+        mediumCount: countMode === "total" ? parseInt(totalQuestions || "0") || 0 : parseInt(mediumCount || "0") || 0,
+        hardCount: countMode === "total" ? 0 : parseInt(hardCount || "0") || 0,
         tags,
         topics,
         description,
@@ -257,12 +312,14 @@ export default function PaperGeneratorScreen() {
         overallDifficulty: overallDifficulty || undefined,
         tags,
         topics,
-        modelVersion,
-        requestedCounts: {
-          easy: parseInt(easyCount || "0") || 0,
-          medium: parseInt(mediumCount || "0") || 0,
-          hard: parseInt(hardCount || "0") || 0,
-        },
+        modelVersion: paperSource === "database" ? "db" : modelVersion,
+        requestedCounts: countMode === "total"
+          ? { easy: 0, medium: 0, hard: 0, total: parseInt(totalQuestions || "0") || 0 }
+          : {
+              easy: parseInt(easyCount || "0") || 0,
+              medium: parseInt(mediumCount || "0") || 0,
+              hard: parseInt(hardCount || "0") || 0,
+            },
         questions: results.map((q) => ({
           text: q.text,
           questionType: paperType,
@@ -329,6 +386,30 @@ export default function PaperGeneratorScreen() {
       </View>
 
       <View style={styles.section}>
+        <Text style={styles.label}>Question source</Text>
+        <View style={styles.rowWrap}>
+          <Pressable
+            onPress={() => setPaperSource("database")}
+            style={[styles.chip, paperSource === "database" && styles.chipActive]}
+          >
+            <Text style={[styles.chipText, paperSource === "database" && styles.chipTextActive]}>From database</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setPaperSource("ai")}
+            style={[styles.chip, paperSource === "ai" && styles.chipActive]}
+          >
+            <Text style={[styles.chipText, paperSource === "ai" && styles.chipTextActive]}>AI generate</Text>
+          </Pressable>
+        </View>
+        <Text style={styles.helper}>
+          {paperSource === "database"
+            ? "Picks valid questions already stored in your question bank."
+            : "Generates new questions using AI models."}
+        </Text>
+      </View>
+
+      {paperSource === "ai" && (
+      <View style={styles.section}>
         <Text style={styles.label}>Model Version</Text>
         <View style={styles.rowWrap}>
           {MODEL_OPTIONS.map((m) => (
@@ -345,6 +426,7 @@ export default function PaperGeneratorScreen() {
           Endpoint: {MODEL_OPTIONS.find((m) => m.value === modelVersion)?.endpoint}
         </Text>
       </View>
+      )}
 
       <View style={styles.section}>
         <Text style={styles.label}>Subject</Text>
@@ -399,6 +481,41 @@ export default function PaperGeneratorScreen() {
       </View>
 
       <View style={styles.section}>
+        <Text style={styles.label}>Question count mode</Text>
+        <View style={styles.rowWrap}>
+          <Pressable
+            onPress={() => setCountMode("total")}
+            style={[styles.chip, countMode === "total" && styles.chipActive]}
+          >
+            <Text style={[styles.chipText, countMode === "total" && styles.chipTextActive]}>Total count</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setCountMode("by_difficulty")}
+            style={[styles.chip, countMode === "by_difficulty" && styles.chipActive]}
+          >
+            <Text style={[styles.chipText, countMode === "by_difficulty" && styles.chipTextActive]}>By difficulty</Text>
+          </Pressable>
+        </View>
+        <Text style={styles.helper}>
+          {countMode === "total"
+            ? "Use when most questions in your bank don't have a difficulty tag."
+            : "Pick a specific number of easy, medium, and hard questions."}
+        </Text>
+      </View>
+
+      {countMode === "total" ? (
+        <View style={styles.section}>
+          <Text style={styles.label}>Total questions</Text>
+          <TextInput
+            value={totalQuestions}
+            onChangeText={setTotalQuestions}
+            keyboardType={Platform.select({ ios: "number-pad", android: "numeric", default: "number-pad" }) as any}
+            style={styles.input}
+            placeholder="e.g. 12"
+          />
+        </View>
+      ) : (
+      <View style={styles.section}>
         <Text style={styles.label}>Question counts</Text>
         <View style={styles.countRow}>
           <View style={{ flex: 1 }}>
@@ -414,8 +531,9 @@ export default function PaperGeneratorScreen() {
             <TextInput value={hardCount} onChangeText={setHardCount} keyboardType={Platform.select({ ios: "number-pad", android: "numeric", default: "number-pad" }) as any} style={styles.input} />
           </View>
         </View>
-        <Text style={styles.helper}>Total: {totalCount}</Text>
+        <Text style={styles.helper}>Total: {difficultyTotalCount}</Text>
       </View>
+      )}
 
       <View style={styles.section}>
         <Text style={styles.label}>Tags</Text>
@@ -488,7 +606,9 @@ export default function PaperGeneratorScreen() {
       </View>
 
       <Pressable disabled={isGenerating} onPress={onGenerate} style={[styles.btn, styles.generateBtn, isGenerating && { opacity: 0.7 }]}>
-        <Text style={styles.btnText}>{isGenerating ? "Generating..." : "Generate"}</Text>
+        <Text style={styles.btnText}>
+          {isGenerating ? "Generating..." : paperSource === "database" ? "Generate from database" : "Generate"}
+        </Text>
       </Pressable>
 
       {results.length > 0 && (
@@ -564,7 +684,7 @@ export default function PaperGeneratorScreen() {
                       placeholder="Question text..."
                     />
                   ) : (
-                    <Text style={styles.qText}>{q.text}</Text>
+                    <MathMarkdown content={q.text} fontSize={14} />
                   )}
 
                   {/* Options for objective papers */}
@@ -599,7 +719,13 @@ export default function PaperGeneratorScreen() {
                               <Text style={[styles.optBullet, i === correct && styles.optBulletCorrect]}>
                                 {String.fromCharCode(65 + i)}.
                               </Text>
-                              <Text style={[styles.optText, i === correct && styles.optTextCorrect]}>{opt}</Text>
+                              <View style={{ flex: 1 }}>
+                                <MathMarkdown
+                                  content={opt}
+                                  fontSize={14}
+                                  style={i === correct ? { color: "#065f46", fontWeight: 500 } : { color: "#374151" }}
+                                />
+                              </View>
                             </>
                           )}
                         </View>
@@ -636,7 +762,7 @@ export default function PaperGeneratorScreen() {
                     </View>
                   ) : (
                     <View style={styles.metaRow}>
-                      <Text style={styles.metaPill}>{q.difficulty}</Text>
+                      {!!q.difficulty && <Text style={styles.metaPill}>{q.difficulty}</Text>}
                       {!!q.chapter && <Text style={styles.metaPill}>{q.chapter}</Text>}
                       {Array.isArray(q.topics) && q.topics.slice(0, 3).map((t, i) => (
                         <Text key={i} style={styles.metaPill}>{t}</Text>

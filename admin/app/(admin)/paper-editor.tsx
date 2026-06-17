@@ -212,35 +212,42 @@ export default function PaperEditorScreen() {
     }
   };
 
-  const handleDeleteQuestion = (index: number) => {
+  const handleDeleteQuestion = async (index: number) => {
     if (!paper || !id) return;
     const q = paper.questions[index];
-    
-    Alert.alert(
-      "Delete Question",
-      `Are you sure you want to delete Q${index + 1}?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await deleteQuestionFromPaper(id, q._id);
-              setPaper(prev => {
-                if (!prev) return prev;
-                return {
-                  ...prev,
-                  questions: prev.questions.filter((_, i) => i !== index),
-                };
-              });
-            } catch (e: any) {
-              Alert.alert("Error", e?.response?.data?.message || "Failed to delete");
-            }
-          },
-        },
-      ]
-    );
+
+    const confirmed = Platform.OS === "web"
+      ? window.confirm(`Are you sure you want to delete Q${index + 1}?`)
+      : await new Promise<boolean>((resolve) => {
+          Alert.alert(
+            "Delete Question",
+            `Are you sure you want to delete Q${index + 1}?`,
+            [
+              { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+              { text: "Delete", style: "destructive", onPress: () => resolve(true) },
+            ]
+          );
+        });
+
+    if (!confirmed) return;
+
+    try {
+      await deleteQuestionFromPaper(id, q._id);
+      setPaper(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          questions: prev.questions.filter((_, i) => i !== index),
+        };
+      });
+    } catch (e: any) {
+      const errorMsg = e?.response?.data?.message || "Failed to delete";
+      if (Platform.OS === "web") {
+        window.alert("Error: " + errorMsg);
+      } else {
+        Alert.alert("Error", errorMsg);
+      }
+    }
   };
 
   const handleAddQuestion = async () => {

@@ -325,6 +325,7 @@ const QuestionDB = () => {
               
             case "question":
               addStreamedQuestion({
+                streamId: event.streamId,
                 dbId: event.dbId,
                 question: event.question,
                 questionType: event.questionType,

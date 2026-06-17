@@ -52,6 +52,7 @@ export type QuestionEditorState = {
   // Streaming support
   clearQuestions: () => void;
   addStreamedQuestion: (data: {
+    streamId?: string;
     dbId: string;
     question: string;
     questionType?: QuestionType;
@@ -270,7 +271,7 @@ export const useQuestionEditorStore = create<QuestionEditorState>((set, get) => 
       const image = toDataUrlIfNeeded(data.image);
       
       const newQuestion: EditorQuestion = {
-        id: data.dbId || makeId(`q${state.questions.length + 1}`),
+        id: data.streamId || data.dbId || makeId(`q${state.questions.length + 1}`),
         text: data.question,
         questionType,
         options,

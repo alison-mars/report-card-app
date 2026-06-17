@@ -153,7 +153,7 @@ export type StreamEvent =
   | { type: "progress"; message: string; step: string; totalPages?: number; startPage?: number; endPage?: number; totalPdfPages?: number }
   | { type: "page_start"; pageNum: number; totalPages: number; currentPage: number; pagesCompleted?: number; pagesRemaining?: number }
   | { type: "page_error"; pageNum: number; error: string }
-  | { type: "question"; index: number; dbId: string; pineconeId?: string; question: string; questionType?: QuestionType; options: string[]; correctIndex?: number; correctOption?: string; image?: string | null; page: number; isExisting: boolean }
+  | { type: "question"; streamId: string; index: number; dbId: string; pineconeId?: string; question: string; questionType?: QuestionType; options: string[]; correctIndex?: number; correctOption?: string; image?: string | null; page: number; isExisting: boolean; savedToDb?: boolean }
   | { type: "page_complete"; pageNum: number; questionsOnPage: number; totalSoFar: number }
   | { type: "complete"; sessionId: string; totalQuestions: number; savedToDb: number }
   | { type: "error"; message: string; details?: string };
@@ -529,6 +529,66 @@ export async function generateQuestionPaperV2(params: {
   };
   const resp = await apiClient.post(`/api/admin/papers/generate-v2`, payload);
   return resp.data as GeneratePaperV2Response;
+}
+
+export type GeneratedPaperItemFromDb = {
+  text: string;
+  options: string[];
+  correctIndex: number;
+  questionType?: QuestionType;
+  subject: string;
+  chapter?: string | null;
+  topics?: string[];
+  tags?: string[];
+  difficulty?: "easy" | "medium" | "hard";
+  image?: string;
+  source?: { fromDatabase?: boolean; questionId?: string; pineconeId?: string };
+};
+
+export type GeneratePaperFromDbResponse = {
+  success: boolean;
+  data: GeneratedPaperItemFromDb[];
+  meta?: {
+    source: "database";
+    countMode: "total" | "by_difficulty";
+    requested: { total: number; easy?: number; medium?: number; hard?: number };
+    generated: {
+      total: number;
+      byDifficulty: { easy: number; medium: number; hard: number; unset: number };
+    };
+    availableInPool: number;
+    shortages?: Record<string, number>;
+  };
+};
+
+export async function generateQuestionPaperFromDb(params: {
+  subject: string;
+  chapter?: string | null;
+  overallDifficulty?: "easy" | "medium" | "hard" | null;
+  questionType?: QuestionType;
+  countMode?: "total" | "by_difficulty";
+  totalCount?: number;
+  easyCount?: number;
+  mediumCount?: number;
+  hardCount?: number;
+  tags?: string[];
+  topics?: string[];
+}) {
+  const payload = {
+    subject: params.subject,
+    chapter: params.chapter ?? null,
+    overallDifficulty: params.overallDifficulty ?? null,
+    questionType: params.questionType ?? "objective",
+    countMode: params.countMode ?? "total",
+    totalCount: params.totalCount ?? 0,
+    easyCount: params.easyCount ?? 0,
+    mediumCount: params.mediumCount ?? 0,
+    hardCount: params.hardCount ?? 0,
+    tags: params.tags ?? [],
+    topics: params.topics ?? [],
+  };
+  const resp = await apiClient.post(`/api/admin/papers/generate-from-db`, payload);
+  return resp.data as GeneratePaperFromDbResponse;
 }
 
 // ============================================================

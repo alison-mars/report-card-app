@@ -3,7 +3,9 @@ import User from "../models/userModel";
 import ROLES from "../types/roles";
 import axios from "axios";
 import { createCanvas } from "@napi-rs/canvas";
-import { getDocument } from "pdfjs-dist";
+import { loadPdfDocument } from "../utils/pdfjs";
+import { parseAiJsonArray } from "../utils/parseAiJson";
+import { extractQuestionsFromPageImage } from "../utils/pdfQuestionExtract";
 import type { CustomRequest } from "../types";
 import { uploadBufferToR2 } from "../utils/fileupload";
 import Question from "../models/questionModel";
@@ -12,6 +14,7 @@ import QuestionPaper from "../models/questionPaperModel";
 import { getEmbeddingForText, upsertVectorsToPinecone, querySimilarInPinecone } from "../utils/vector";
 import { v4 as uuidv4 } from "uuid";
 import { createHash } from "crypto";
+import mongoose from "mongoose";
 
 export const listUsers = async (req: Request, res: Response) => {
   try {
@@ -288,7 +291,7 @@ export const uploadQuestionPdf = async (req: CustomRequest, res: Response) => {
     // Download the PDF from R2 and load via pdfjs
     const pdfResp = await axios.get<ArrayBuffer>(fileUrl, { responseType: "arraybuffer" });
     const pdfData = new Uint8Array(pdfResp.data as any);
-    const loadingTask = getDocument({ data: pdfData, disableFontFace: true, isEvalSupported: false });
+    const loadingTask = loadPdfDocument(pdfData);
     const pdf = await loadingTask.promise;
     const totalPages = pdf.numPages;
 
@@ -305,10 +308,6 @@ export const uploadQuestionPdf = async (req: CustomRequest, res: Response) => {
     };
 
     const pageResults: ExtractedQuestion[] = [];
-    const seenQuestions = new Set<string>();
-    // Keep previous page context to handle cross-page (split) questions
-    let previousPageDataUrl: string | null = null;
-    let previousPageExtraction: any[] = [];
 
     const currentUser = req.user;
     const userId = String(currentUser?._id || "");
@@ -391,8 +390,9 @@ export const uploadQuestionPdf = async (req: CustomRequest, res: Response) => {
         ? `\n\n--- EXTRACTED TEXT FROM PDF (reference only, may have garbled math symbols) ---\n${extractedText}\n--- END EXTRACTED TEXT ---\n`
         : "\n\n--- No selectable text found in PDF, using OCR from image ---\n";
 
-      const firstPageInstruction =
-        "Extract ALL questions (both objective MCQ and subjective open-ended) from this page. " +
+      const pageInstruction =
+        "Extract ALL questions (both objective MCQ and subjective open-ended) visible on this page. " +
+        "Do not skip any question. If a question continues from a previous page, include the full question text visible on this page. " +
         "IMPORTANT: Use the IMAGE as the primary source for understanding mathematical content. The extracted text may have garbled symbols. " +
         "Convert all mathematical expressions to proper LaTeX format (e.g., $x^2$, $\\frac{a}{b}$, $T_1$, $\\alpha$). " +
         extractedTextBlock +
@@ -404,48 +404,20 @@ export const uploadQuestionPdf = async (req: CustomRequest, res: Response) => {
         "Do not include any text outside the JSON. If no questions found, return []. " +
         "When a diagram is present, provide a precise `diagramBox` around the diagram only.";
 
-      const continuationInstruction =
-        "The next page may contain the continuation of a question that started on the previous page. " +
-        "You are given: (1) the previous page image, (2) the JSON extracted from the previous page, (3) the current page image, and (4) the EXTRACTED TEXT from the current page. " +
-        "IMPORTANT: Use the IMAGE as the primary source. Convert all math to LaTeX format. The extracted text may have garbled symbols. " +
-        "Using these, return ONLY the questions that are NEW on the current page or that CONTINUE from the previous page but were incomplete there. " +
-        "Include both objective (MCQ) and subjective (open-ended) questions. " +
-        "Do NOT duplicate any question that is already fully captured in the previous JSON. " +
-        "Output must be a JSON array with the same exact schema as before (including questionType field). " +
-        "If nothing new or continued is found, return [].";
-
       const payload = {
         model,
         messages: [
           { role: "system", content: baseSystemPrompt },
-          pageNum === start
-            ? {
-                role: "user",
-                content: [
-                  { type: "text", text: firstPageInstruction },
-                  { type: "image_url", image_url: { url: dataUrl } },
-                ],
-              }
-            : {
-                role: "user",
-                content: [
-                  { type: "text", text: continuationInstruction },
-                  // Previous page image
-                  ...(previousPageDataUrl ? [{ type: "image_url", image_url: { url: previousPageDataUrl } } as any] : []),
-                  // Previous JSON extraction to avoid duplicates and help reconstruction
-                  {
-                    type: "text",
-                    text:
-                      "Previous page extracted JSON (may be incomplete for split questions):\n" +
-                      JSON.stringify(previousPageExtraction || [], null, 2) +
-                      extractedTextBlock,
-                  },
-                  // Current page image
-                  { type: "image_url", image_url: { url: dataUrl } },
-                ],
-              },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: pageInstruction },
+              { type: "image_url", image_url: { url: dataUrl } },
+            ],
+          },
         ],
         temperature: 0,
+        max_tokens: 8192,
       };
 
       const headers = {
@@ -461,8 +433,7 @@ export const uploadQuestionPdf = async (req: CustomRequest, res: Response) => {
         const resp = await axios.post("https://openrouter.ai/api/v1/chat/completions", payload, { headers });
         const content: string = resp?.data?.choices?.[0]?.message?.content || "[]";
         console.log(`[uploadQuestionPdf] Page ${pageNum} raw AI response:`, content.substring(0, 500));
-        const jsonText = extractJsonArray(content);
-        extracted = JSON.parse(jsonText);
+        extracted = parseAiJsonArray(content);
       } catch (err: any) {
         // If extraction fails for the page, continue to next; log for debugging
         const errBody = err?.response?.data;
@@ -530,19 +501,10 @@ export const uploadQuestionPdf = async (req: CustomRequest, res: Response) => {
           image: item?.hasDiagram ? diagramUrl : null,
           page: pageNum,
         };
-        // Allow subjective questions with no options, or objective questions with options
-        const isValidQuestion = q.question && 
-          ((questionType === "objective" && options.length > 0) || questionType === "subjective");
-        
-        if (isValidQuestion && !seenQuestions.has(q.question)) {
-          seenQuestions.add(q.question);
+        if (q.question) {
           pageResults.push(q);
         }
       }
-
-      // Save context for next iteration
-      previousPageDataUrl = dataUrl;
-      previousPageExtraction = extracted;
     }
 
     res.status(200).json({
@@ -657,7 +619,7 @@ export const uploadQuestionPdfStream = async (req: CustomRequest, res: Response)
     sendEvent("progress", { message: "Downloading PDF...", step: "download" });
     const pdfResp = await axios.get<ArrayBuffer>(fileUrl, { responseType: "arraybuffer" });
     const pdfData = new Uint8Array(pdfResp.data as any);
-    const loadingTask = getDocument({ data: pdfData, disableFontFace: true, isEvalSupported: false });
+    const loadingTask = loadPdfDocument(pdfData);
     const pdf = await loadingTask.promise;
     const totalPages = pdf.numPages;
 
@@ -696,14 +658,10 @@ export const uploadQuestionPdfStream = async (req: CustomRequest, res: Response)
       page: number;
     };
 
-    const seenQuestions = new Set<string>();
-    let previousPageDataUrl: string | null = null;
-    let previousPageExtraction: any[] = [];
-
+    let questionIndex = 0;
     const userId = String(currentUser._id || "");
     const role = String(currentUser.role || "");
     const savedQuestionIds: string[] = [];
-    let questionIndex = 0;
 
     for (let pageNum = start; pageNum <= end; pageNum++) {
       sendEvent("page_start", { 
@@ -757,93 +715,6 @@ export const uploadQuestionPdfStream = async (req: CustomRequest, res: Response)
         lastY = item.y;
       }
 
-      const hasSelectableText = extractedText.trim().length > 50; // Threshold to detect if PDF has real text
-
-      // Build prompt for OpenRouter (multimodal)
-      const model = "google/gemini-2.5-flash";
-      const baseSystemPrompt =
-        "You are an expert at parsing printed exam pages. You will receive: " +
-        "(1) The EXTRACTED TEXT from the PDF's text layer - this may contain garbled Unicode math symbols. " +
-        "(2) An IMAGE of the page - use this to understand the ACTUAL content, especially mathematical expressions. " +
-        "CRITICAL MATH FORMATTING RULES: " +
-        "- Convert ALL mathematical expressions to proper LaTeX format wrapped in $ delimiters. " +
-        "- Examples: 'x 2 /6 + y 2 /3 = 1' should become '$\\frac{x^2}{6} + \\frac{y^2}{3} = 1$'. " +
-        "- Subscripts like 'T 1' become '$T_1$', superscripts like 'x 2' become '$x^2$'. " +
-        "- Set notation like '{0,1,2,3}' becomes '$\\{0,1,2,3\\}$'. " +
-        "- Intervals like '(0,1)' in math context become '$(0,1)$'. " +
-        "- Replace garbled symbols (≡, ∈, ⊆, →, etc) with their proper LaTeX equivalents ($\\equiv$, $\\in$, $\\subseteq$, $\\to$). " +
-        "- Greek letters should be in LaTeX: α→$\\alpha$, β→$\\beta$, θ→$\\theta$, etc. " +
-        "- USE THE IMAGE to determine the correct mathematical meaning when the extracted text is garbled. " +
-        "Return ONLY strict JSON (no prose). For each question, include: " +
-        "`question` (string with proper LaTeX math), `questionType` ('objective' or 'subjective'), " +
-        "`options` (array of strings with proper LaTeX math, ONLY for objective questions, empty array for subjective), " +
-        "and, if clearly present for objective questions, `correctOption` (string matching one of the options). " +
-        "SUBJECTIVE questions are: essay questions, short-answer questions, numerical problems without options, derivations, proofs, 'explain' questions, 'describe' questions, etc. " +
-        "OBJECTIVE questions are: MCQs with A/B/C/D options, true/false, match the following with options. " +
-        "If a diagram is associated with a question, set `hasDiagram` to true and also include `diagramBox` " +
-        "as an object with normalized coordinates relative to the image dimensions: " +
-        "{ x: number, y: number, width: number, height: number } with 0 <= values <= 1. " +
-        "The box should tightly enclose only the figure/diagram related to that question (exclude text as much as possible). " +
-        "Focus only on printed/typed content; ignore handwritten notes.";
-
-      const extractedTextBlock = hasSelectableText
-        ? `\n\n--- EXTRACTED TEXT FROM PDF (reference only, may have garbled math symbols) ---\n${extractedText}\n--- END EXTRACTED TEXT ---\n`
-        : "\n\n--- No selectable text found in PDF, using OCR from image ---\n";
-
-      const firstPageInstruction =
-        "Extract ALL questions (both objective MCQ and subjective open-ended) from this page. " +
-        "IMPORTANT: Use the IMAGE as the primary source for understanding mathematical content. The extracted text may have garbled symbols. " +
-        "Convert all mathematical expressions to proper LaTeX format (e.g., $x^2$, $\\frac{a}{b}$, $T_1$, $\\alpha$). " +
-        extractedTextBlock +
-        "Respond with a JSON array using this exact schema: " +
-        "[{ \"question\": string, \"questionType\": \"objective\" | \"subjective\", \"options\": string[], \"correctOption\"?: string, \"hasDiagram\": boolean, " +
-        "\"diagramBox\"?: { \"x\": number, \"y\": number, \"width\": number, \"height\": number } }]. " +
-        "For subjective questions (essay, short-answer, numerical without options), set questionType to 'subjective' and options to empty array []. " +
-        "For objective questions (MCQ with options), set questionType to 'objective' and include all options. " +
-        "Do not include any text outside the JSON. If no questions found, return []. " +
-        "When a diagram is present, provide a precise `diagramBox` around the diagram only.";
-
-      const continuationInstruction =
-        "The next page may contain the continuation of a question that started on the previous page. " +
-        "You are given: (1) the previous page image, (2) the JSON extracted from the previous page, (3) the current page image, and (4) the EXTRACTED TEXT from the current page. " +
-        "IMPORTANT: Use the IMAGE as the primary source. Convert all math to LaTeX format. The extracted text may have garbled symbols. " +
-        "Using these, return ONLY the questions that are NEW on the current page or that CONTINUE from the previous page but were incomplete there. " +
-        "Include both objective (MCQ) and subjective (open-ended) questions. " +
-        "Do NOT duplicate any question that is already fully captured in the previous JSON. " +
-        "Output must be a JSON array with the same exact schema as before (including questionType field). " +
-        "If nothing new or continued is found, return [].";
-
-      const payload = {
-        model,
-        messages: [
-          { role: "system", content: baseSystemPrompt },
-          pageNum === start
-            ? {
-                role: "user",
-                content: [
-                  { type: "text", text: firstPageInstruction },
-                  { type: "image_url", image_url: { url: dataUrl } },
-                ],
-              }
-            : {
-                role: "user",
-                content: [
-                  { type: "text", text: continuationInstruction },
-                  ...(previousPageDataUrl ? [{ type: "image_url", image_url: { url: previousPageDataUrl } } as any] : []),
-                  {
-                    type: "text",
-                    text:
-                      "Previous page extracted JSON (may be incomplete for split questions):\n" +
-                      JSON.stringify(previousPageExtraction || [], null, 2) +
-                      extractedTextBlock,
-                  },
-                  { type: "image_url", image_url: { url: dataUrl } },
-                ],
-              },
-        ],
-        temperature: 0,
-      };
-
       const headers = {
         Authorization: `Bearer ${openrouterApiKey}`,
         "Content-Type": "application/json",
@@ -853,11 +724,15 @@ export const uploadQuestionPdfStream = async (req: CustomRequest, res: Response)
 
       let extracted: any[] = [];
       try {
-        const resp = await axios.post("https://openrouter.ai/api/v1/chat/completions", payload, { headers });
-        const content: string = resp?.data?.choices?.[0]?.message?.content || "[]";
-        console.log(`[uploadQuestionPdfStream] Page ${pageNum} raw AI response:`, content.substring(0, 500));
-        const jsonText = extractJsonArray(content);
-        extracted = JSON.parse(jsonText);
+        const result = await extractQuestionsFromPageImage(
+          openrouterApiKey,
+          dataUrl,
+          extractedText,
+          headers,
+          `[uploadQuestionPdfStream] Page ${pageNum}`
+        );
+        extracted = result.items;
+        console.log(`[uploadQuestionPdfStream] Page ${pageNum} raw AI response:`, result.rawContent.substring(0, 500));
       } catch (err: any) {
         const errBody = err?.response?.data;
         const errMsg = errBody ? JSON.stringify(errBody) : String(err);
@@ -915,13 +790,9 @@ export const uploadQuestionPdfStream = async (req: CustomRequest, res: Response)
         const questionType: "objective" | "subjective" = 
           item?.questionType === "subjective" || (options.length === 0) ? "subjective" : "objective";
 
-        // Allow subjective questions with no options, or objective questions with options
-        const isValidQuestion = questionText && 
-          ((questionType === "objective" && options.length > 0) || questionType === "subjective");
-
-        if (isValidQuestion && !seenQuestions.has(questionText)) {
-          seenQuestions.add(questionText);
+        if (questionText) {
           questionIndex++;
+          const streamId = uuidv4();
 
           // Determine correct index (only for objective questions)
           let correctIndex: number | undefined;
@@ -931,23 +802,14 @@ export const uploadQuestionPdfStream = async (req: CustomRequest, res: Response)
             if (foundIdx >= 0) correctIndex = foundIdx;
           }
 
-          // Compute content hash for deduplication
           const contentHash = computeContentHash(subject, questionText, options);
-
-          // Check if question already exists in DB
           const existingQuestion = await Question.findOne({ contentHash });
-          
-          let savedQuestion;
-          let dbId: string;
-          let pineconeId: string | undefined;
 
-          if (existingQuestion) {
-            // Question already exists, use existing
-            dbId = existingQuestion._id.toString();
-            pineconeId = existingQuestion.pineconeId ?? undefined;
-            savedQuestion = existingQuestion;
-          } else {
-            // Create embedding and save to Pinecone + MongoDB
+          let dbId: string | null = null;
+          let pineconeId: string | undefined;
+          let savedToDb = false;
+
+          if (!existingQuestion) {
             try {
               const embedTextParts = [
                 subject,
@@ -958,22 +820,19 @@ export const uploadQuestionPdfStream = async (req: CustomRequest, res: Response)
               const values = await getEmbeddingForText(embedInput);
               const vecId = uuidv4();
 
-              // Build Pinecone metadata
               const metadata: Record<string, string | number | boolean | string[]> = {
                 subject,
                 hasImage: Boolean(diagramUrl),
                 questionType,
               };
 
-              // Upsert to Pinecone
               await upsertVectorsToPinecone([{
                 id: vecId,
                 values,
                 metadata,
               }]);
 
-              // Save to MongoDB
-              savedQuestion = await Question.create({
+              const savedQuestion = await Question.create({
                 text: questionText,
                 options,
                 correctIndex,
@@ -989,19 +848,20 @@ export const uploadQuestionPdfStream = async (req: CustomRequest, res: Response)
 
               dbId = savedQuestion._id.toString();
               pineconeId = vecId;
+              savedToDb = true;
             } catch (saveError) {
               console.error("Failed to save question to DB:", saveError);
-              // Still send the question to frontend even if DB save fails
-              dbId = `temp_${questionIndex}`;
             }
           }
 
-          savedQuestionIds.push(dbId);
+          if (savedToDb && dbId) {
+            savedQuestionIds.push(dbId);
+          }
 
-          // Stream the question to the frontend
           sendEvent("question", {
+            streamId,
             index: questionIndex,
-            dbId,
+            dbId: dbId ?? streamId,
             pineconeId,
             question: questionText,
             questionType,
@@ -1011,6 +871,7 @@ export const uploadQuestionPdfStream = async (req: CustomRequest, res: Response)
             image: diagramUrl,
             page: pageNum,
             isExisting: !!existingQuestion,
+            savedToDb,
           });
         }
       }
@@ -1022,10 +883,6 @@ export const uploadQuestionPdfStream = async (req: CustomRequest, res: Response)
       });
 
       sendEvent("page_complete", { pageNum, questionsOnPage: extracted.length, totalSoFar: questionIndex });
-
-      // Save context for next iteration
-      previousPageDataUrl = dataUrl;
-      previousPageExtraction = extracted;
     }
 
     // Mark session as completed
@@ -1914,26 +1771,6 @@ export const generateQuestionPaper = async (req: CustomRequest, res: Response) =
   }
 };
 
-function extractJsonArray(text: string): string {
-  // Try direct parse
-  try {
-    JSON.parse(text);
-    return text;
-  } catch {}
-  // Try to locate a JSON code block
-  const blockMatch = text.match(/```json([\s\S]*?)```/i);
-  if (blockMatch) {
-    return (blockMatch[1] ?? "[]").trim();
-  }
-  // Fallback: grab the first [...] block
-  const start = text.indexOf("[");
-  const end = text.lastIndexOf("]");
-  if (start !== -1 && end !== -1 && end > start) {
-    return text.slice(start, end + 1);
-  }
-  return "[]";
-}
-
 function extractJsonObject(text: string): string {
   // Try direct parse
   try {
@@ -2792,7 +2629,7 @@ export const generateQuestionPaperv2 = async (req: CustomRequest, res: Response)
       if (!content) return [];
 
       try {
-        const parsed = JSON.parse(extractJsonArray(content));
+        const parsed = parseAiJsonArray(content);
         if (Array.isArray(parsed)) {
           return parsed.map((k: any) => String(k).trim()).filter((k: string) => k.length > 0);
         }
@@ -3221,6 +3058,265 @@ export const generateQuestionPaperv2 = async (req: CustomRequest, res: Response)
 };
 
 // ============================================================
+// Generate question paper from database (no AI)
+// ============================================================
+
+type DbPaperQuestionType = "objective" | "subjective";
+
+function buildDbQuestionFilter(params: {
+  subject: string;
+  chapter?: string | null;
+  overallDifficulty?: "easy" | "medium" | "hard" | null;
+  difficulty?: "easy" | "medium" | "hard" | null;
+  tags?: string[];
+  topics?: string[];
+  questionType: DbPaperQuestionType;
+}): Record<string, unknown> {
+  const query: Record<string, unknown> = {
+    subject: params.subject,
+    text: { $exists: true, $nin: ["", null] },
+  };
+
+  if (params.questionType === "subjective") {
+    query.questionType = "subjective";
+  } else {
+    query.$or = [
+      { questionType: "objective" },
+      { questionType: { $exists: false } },
+      { questionType: null },
+    ];
+  }
+
+  if (params.chapter) {
+    query.chapter = params.chapter;
+  }
+
+  const difficultyFilter = params.difficulty || params.overallDifficulty;
+  if (difficultyFilter) {
+    query.difficulty = difficultyFilter;
+  }
+
+  if (params.tags && params.tags.length > 0) {
+    query.tags = { $in: params.tags };
+  }
+
+  if (params.topics && params.topics.length > 0) {
+    query.topics = { $in: params.topics };
+  }
+
+  if (params.questionType === "objective") {
+    query.$expr = {
+      $and: [
+        { $gte: [{ $size: { $ifNull: ["$options", []] } }, 4] },
+        { $gte: ["$correctIndex", 0] },
+        { $lt: ["$correctIndex", { $size: { $ifNull: ["$options", []] } }] },
+      ],
+    };
+  }
+
+  return query;
+}
+
+function mapDbQuestionToPaperItem(q: any) {
+  return {
+    text: String(q.text || "").trim(),
+    options: Array.isArray(q.options) ? q.options.map((o: any) => String(o)) : [],
+    correctIndex: typeof q.correctIndex === "number" ? q.correctIndex : 0,
+    questionType: q.questionType === "subjective" ? "subjective" : "objective",
+    subject: String(q.subject || ""),
+    chapter: q.chapter ? String(q.chapter) : null,
+    topics: Array.isArray(q.topics) ? q.topics.map((t: any) => String(t)) : [],
+    tags: Array.isArray(q.tags) ? q.tags.map((t: any) => String(t)) : [],
+    difficulty: q.difficulty || undefined,
+    image: q.image || undefined,
+    source: {
+      fromDatabase: true,
+      questionId: q._id ? String(q._id) : undefined,
+      pineconeId: q.pineconeId ? String(q.pineconeId) : undefined,
+    },
+  };
+}
+
+async function sampleQuestionsFromDb(
+  filter: Record<string, unknown>,
+  count: number,
+  excludeIds: Set<string> = new Set()
+): Promise<any[]> {
+  if (count <= 0) return [];
+
+  const matchFilter =
+    excludeIds.size > 0
+      ? {
+          ...filter,
+          _id: {
+            $nin: Array.from(excludeIds)
+              .filter((id) => mongoose.Types.ObjectId.isValid(id))
+              .map((id) => new mongoose.Types.ObjectId(id)),
+          },
+        }
+      : filter;
+
+  const available = await Question.countDocuments(matchFilter);
+  if (available === 0) return [];
+
+  const sampleSize = Math.min(count, available);
+  return Question.aggregate([
+    { $match: matchFilter },
+    { $sample: { size: sampleSize } },
+  ]);
+}
+
+export const generateQuestionPaperFromDb = async (req: CustomRequest, res: Response) => {
+  try {
+    const body = (req.body || {}) as {
+      subject?: string;
+      chapter?: string | null;
+      overallDifficulty?: "easy" | "medium" | "hard" | null;
+      questionType?: DbPaperQuestionType;
+      countMode?: "total" | "by_difficulty";
+      totalCount?: number | string | null;
+      easyCount?: number | string | null;
+      mediumCount?: number | string | null;
+      hardCount?: number | string | null;
+      tags?: string[];
+      topics?: string[];
+    };
+
+    const subject = String(body?.subject || "").trim();
+    if (!subject) {
+      res.status(400).json({ success: false, message: "subject is required" });
+      return;
+    }
+
+    const chapter = body?.chapter ? String(body.chapter).trim() : null;
+    const overallDifficulty = body?.overallDifficulty
+      ? (String(body.overallDifficulty).toLowerCase() as "easy" | "medium" | "hard")
+      : null;
+    const questionType: DbPaperQuestionType =
+      body?.questionType === "subjective" ? "subjective" : "objective";
+    const countMode = body?.countMode === "by_difficulty" ? "by_difficulty" : "total";
+    const tags = Array.isArray(body?.tags) ? body.tags.map((t) => String(t)) : [];
+    const topics = Array.isArray(body?.topics) ? body.topics.map((t) => String(t)) : [];
+
+    const easyCount = Math.max(parseInt(String(body?.easyCount ?? "0"), 10) || 0, 0);
+    const mediumCount = Math.max(parseInt(String(body?.mediumCount ?? "0"), 10) || 0, 0);
+    const hardCount = Math.max(parseInt(String(body?.hardCount ?? "0"), 10) || 0, 0);
+    const totalCount = Math.min(
+      Math.max(parseInt(String(body?.totalCount ?? "0"), 10) || 0, 0),
+      100
+    );
+
+    const totalRequested =
+      countMode === "total" ? totalCount : easyCount + mediumCount + hardCount;
+
+    if (totalRequested <= 0) {
+      res.status(400).json({
+        success: false,
+        message:
+          countMode === "total"
+            ? "totalCount must be greater than 0"
+            : "At least one of easy/medium/hard counts must be > 0",
+      });
+      return;
+    }
+
+    const usedIds = new Set<string>();
+    const selected: any[] = [];
+    const shortages: Record<string, number> = {};
+
+    if (countMode === "total") {
+      const filter = buildDbQuestionFilter({
+        subject,
+        chapter,
+        overallDifficulty,
+        tags,
+        topics,
+        questionType,
+      });
+      const items = await sampleQuestionsFromDb(filter, totalRequested, usedIds);
+      items.forEach((q) => {
+        usedIds.add(String(q._id));
+        selected.push(mapDbQuestionToPaperItem(q));
+      });
+      if (items.length < totalRequested) {
+        shortages.total = totalRequested - items.length;
+      }
+    } else {
+      const difficultyTargets: Array<{ difficulty: "easy" | "medium" | "hard"; count: number }> = [
+        { difficulty: "easy", count: easyCount },
+        { difficulty: "medium", count: mediumCount },
+        { difficulty: "hard", count: hardCount },
+      ];
+
+      for (const { difficulty, count } of difficultyTargets) {
+        if (count <= 0) continue;
+
+        const filter = buildDbQuestionFilter({
+          subject,
+          chapter,
+          overallDifficulty,
+          difficulty,
+          tags,
+          topics,
+          questionType,
+        });
+        const items = await sampleQuestionsFromDb(filter, count, usedIds);
+        items.forEach((q) => {
+          usedIds.add(String(q._id));
+          selected.push(mapDbQuestionToPaperItem(q));
+        });
+        if (items.length < count) {
+          shortages[difficulty] = count - items.length;
+        }
+      }
+    }
+
+    // Shuffle so difficulty-ordered picks don't stay grouped
+    for (let i = selected.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [selected[i], selected[j]] = [selected[j], selected[i]];
+    }
+
+    const filter = buildDbQuestionFilter({
+      subject,
+      chapter,
+      overallDifficulty,
+      tags,
+      topics,
+      questionType,
+    });
+    const availableInPool = await Question.countDocuments(filter);
+
+    res.status(200).json({
+      success: true,
+      data: selected,
+      meta: {
+        source: "database",
+        countMode,
+        requested:
+          countMode === "total"
+            ? { total: totalRequested }
+            : { easy: easyCount, medium: mediumCount, hard: hardCount, total: totalRequested },
+        generated: {
+          total: selected.length,
+          byDifficulty: {
+            easy: selected.filter((q) => q.difficulty === "easy").length,
+            medium: selected.filter((q) => q.difficulty === "medium").length,
+            hard: selected.filter((q) => q.difficulty === "hard").length,
+            unset: selected.filter((q) => !q.difficulty).length,
+          },
+        },
+        availableInPool,
+        shortages: Object.keys(shortages).length > 0 ? shortages : undefined,
+      },
+    });
+  } catch (error) {
+    console.error("Error generating question paper from database:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+// ============================================================
 // Question Paper CRUD Operations (for history/editor feature)
 // ============================================================
 
@@ -3368,7 +3464,7 @@ export const uploadPdfToQuestionPaper = async (req: CustomRequest, res: Response
     // Download the PDF from R2 and load via pdfjs
     const pdfResp = await axios.get<ArrayBuffer>(fileUrl, { responseType: "arraybuffer" });
     const pdfData = new Uint8Array(pdfResp.data as any);
-    const loadingTask = getDocument({ data: pdfData, disableFontFace: true, isEvalSupported: false });
+    const loadingTask = loadPdfDocument(pdfData);
     const pdf = await loadingTask.promise;
     const totalPages = pdf.numPages;
 
@@ -3387,9 +3483,6 @@ export const uploadPdfToQuestionPaper = async (req: CustomRequest, res: Response
     };
 
     const extractedQuestions: ExtractedQuestion[] = [];
-    const seenQuestions = new Set<string>();
-    let previousPageDataUrl: string | null = null;
-    let previousPageExtraction: any[] = [];
 
     for (let pageNum = start; pageNum <= end; pageNum++) {
       const pageProgress = 10 + Math.floor(((pageNum - start) / pagesToProcess) * 80);
@@ -3467,8 +3560,9 @@ export const uploadPdfToQuestionPaper = async (req: CustomRequest, res: Response
         ? `\n\n--- EXTRACTED TEXT FROM PDF (reference only, may have garbled math symbols) ---\n${extractedText}\n--- END EXTRACTED TEXT ---\n`
         : "\n\n--- No selectable text found in PDF, using OCR from image ---\n";
 
-      const firstPageInstruction =
-        "Extract ALL questions (both objective MCQ and subjective open-ended) from this page. " +
+      const pageInstruction =
+        "Extract ALL questions (both objective MCQ and subjective open-ended) visible on this page. " +
+        "Do not skip any question. If a question continues from a previous page, include the full question text visible on this page. " +
         "IMPORTANT: Use the IMAGE as the primary source for understanding mathematical content. The extracted text may have garbled symbols. " +
         "Convert all mathematical expressions to proper LaTeX format (e.g., $x^2$, $\\frac{a}{b}$, $T_1$, $\\alpha$). " +
         extractedTextBlock +
@@ -3480,48 +3574,20 @@ export const uploadPdfToQuestionPaper = async (req: CustomRequest, res: Response
         "Do not include any text outside the JSON. If no questions found, return []. " +
         "When a diagram is present, provide a precise `diagramBox` around the diagram only.";
 
-      const continuationInstruction =
-        "The next page may contain the continuation of a question that started on the previous page. " +
-        "You are given: (1) the previous page image, (2) the JSON extracted from the previous page, (3) the current page image, and (4) the EXTRACTED TEXT from the current page. " +
-        "IMPORTANT: Use the IMAGE as the primary source. Convert all math to LaTeX format. The extracted text may have garbled symbols. " +
-        "Using these, return ONLY the questions that are NEW on the current page or that CONTINUE from the previous page but were incomplete there. " +
-        "Include both objective (MCQ) and subjective (open-ended) questions. " +
-        "Do NOT duplicate any question that is already fully captured in the previous JSON. " +
-        "Output must be a JSON array with the same exact schema as before (including questionType field). " +
-        "If nothing new or continued is found, return [].";
-
       const payload = {
         model: "google/gemini-2.5-flash",
         messages: [
           { role: "system", content: baseSystemPrompt },
-          pageNum === start
-            ? {
-                role: "user",
-                content: [
-                  { type: "text", text: firstPageInstruction },
-                  { type: "image_url", image_url: { url: dataUrl } },
-                ],
-              }
-            : {
-                role: "user",
-                content: [
-                  { type: "text", text: continuationInstruction },
-                  // Previous page image
-                  ...(previousPageDataUrl ? [{ type: "image_url", image_url: { url: previousPageDataUrl } } as any] : []),
-                  // Previous JSON extraction to avoid duplicates and help reconstruction
-                  {
-                    type: "text",
-                    text:
-                      "Previous page extracted JSON (may be incomplete for split questions):\n" +
-                      JSON.stringify(previousPageExtraction || [], null, 2) +
-                      extractedTextBlock,
-                  },
-                  // Current page image
-                  { type: "image_url", image_url: { url: dataUrl } },
-                ],
-              },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: pageInstruction },
+              { type: "image_url", image_url: { url: dataUrl } },
+            ],
+          },
         ],
         temperature: 0,
+        max_tokens: 8192,
       };
 
       const headers = {
@@ -3536,8 +3602,7 @@ export const uploadPdfToQuestionPaper = async (req: CustomRequest, res: Response
         const aiResp = await axios.post("https://openrouter.ai/api/v1/chat/completions", payload, { headers });
         const content: string = aiResp?.data?.choices?.[0]?.message?.content || "[]";
         console.log(`[uploadPdfToQuestionPaper] Page ${pageNum} raw AI response:`, content.substring(0, 500));
-        const jsonText = extractJsonArray(content);
-        extracted = JSON.parse(jsonText);
+        extracted = parseAiJsonArray(content);
       } catch (err: any) {
         const errBody = err?.response?.data;
         console.error("OpenRouter extraction failed for page", pageNum, errBody ? JSON.stringify(errBody) : err);
@@ -3586,11 +3651,7 @@ export const uploadPdfToQuestionPaper = async (req: CustomRequest, res: Response
         const questionType: "objective" | "subjective" = 
           item?.questionType === "subjective" || (options.length === 0) ? "subjective" : "objective";
 
-        const isValidQuestion = questionText && 
-          ((questionType === "objective" && options.length > 0) || questionType === "subjective");
-
-        if (isValidQuestion && !seenQuestions.has(questionText)) {
-          seenQuestions.add(questionText);
+        if (questionText) {
 
           let correctIndex: number | undefined;
           if (questionType === "objective" && item?.correctOption) {
@@ -3617,9 +3678,6 @@ export const uploadPdfToQuestionPaper = async (req: CustomRequest, res: Response
       }
 
       sendEvent("page_complete", { page: pageNum - start + 1, totalPages: pagesToProcess, questionsFound: extractedQuestions.length });
-
-      previousPageDataUrl = dataUrl;
-      previousPageExtraction = extracted;
     }
 
     if (extractedQuestions.length === 0) {

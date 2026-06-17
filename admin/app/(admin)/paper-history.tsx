@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, Alert, ActivityIndicator, Modal } from "react-native";
+import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, Alert, ActivityIndicator, Modal, Platform } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { 
   listQuestionPapers, 
@@ -101,27 +101,38 @@ export default function PaperHistoryScreen() {
     }, [fetchPapers])
   );
 
-  const handleDelete = (paper: QuestionPaperListItem) => {
-    Alert.alert(
-      "Delete Paper",
-      `Are you sure you want to delete "${paper.title}"? This cannot be undone.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await deleteQuestionPaper(paper._id);
-              Alert.alert("Deleted", "Paper has been deleted.");
-              fetchPapers(false);
-            } catch (e: any) {
-              Alert.alert("Error", e?.response?.data?.message || "Failed to delete");
-            }
-          },
-        },
-      ]
-    );
+  const handleDelete = async (paper: QuestionPaperListItem) => {
+    const confirmed = Platform.OS === "web"
+      ? window.confirm(`Are you sure you want to delete "${paper.title}"? This cannot be undone.`)
+      : await new Promise<boolean>((resolve) => {
+          Alert.alert(
+            "Delete Paper",
+            `Are you sure you want to delete "${paper.title}"? This cannot be undone.`,
+            [
+              { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+              { text: "Delete", style: "destructive", onPress: () => resolve(true) },
+            ]
+          );
+        });
+
+    if (!confirmed) return;
+
+    try {
+      await deleteQuestionPaper(paper._id);
+      if (Platform.OS === "web") {
+        window.alert("Paper has been deleted.");
+      } else {
+        Alert.alert("Deleted", "Paper has been deleted.");
+      }
+      fetchPapers(false);
+    } catch (e: any) {
+      const errorMsg = e?.response?.data?.message || "Failed to delete";
+      if (Platform.OS === "web") {
+        window.alert("Error: " + errorMsg);
+      } else {
+        Alert.alert("Error", errorMsg);
+      }
+    }
   };
 
   const handleDuplicate = async (paper: QuestionPaperListItem) => {
